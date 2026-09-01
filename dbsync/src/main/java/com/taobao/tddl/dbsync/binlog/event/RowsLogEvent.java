@@ -1,10 +1,13 @@
 package com.taobao.tddl.dbsync.binlog.event;
 
+import java.nio.charset.Charset;
 import java.util.BitSet;
 
 import com.taobao.tddl.dbsync.binlog.LogBuffer;
 import com.taobao.tddl.dbsync.binlog.LogContext;
 import com.taobao.tddl.dbsync.binlog.LogEvent;
+import com.taobao.tddl.dbsync.binlog.event.TableMapLogEvent.ColumnInfo;
+import com.taobao.tddl.dbsync.binlog.exception.TableIdNotFoundException;
 
 /**
  * Common base class for all row-containing log events.
@@ -61,6 +64,7 @@ public abstract class RowsLogEvent extends LogEvent {
 
     /** Bitmap denoting columns available */
     protected final int      columnLen;
+    protected final boolean  partial;
     protected final BitSet   columns;
 
     /**
@@ -70,6 +74,8 @@ public abstract class RowsLogEvent extends LogEvent {
      * the number of columns of the table on the master.
      */
     protected final BitSet   changeColumns;
+
+    protected int            jsonColumnCount         = 0;
 
     /** XXX: Don't handle buffer in another thread. */
     private final LogBuffer  rowsBuf;                           /*
@@ -109,8 +115,17 @@ public abstract class RowsLogEvent extends LogEvent {
     public static final int  RW_V_EXTRAINFO_TAG      = 0;
 
     public RowsLogEvent(LogHeader header, LogBuffer buffer, FormatDescriptionLogEvent descriptionEvent){
-        super(header);
+        this(header, buffer, descriptionEvent, false);
+    }
 
+    public RowsLogEvent(LogHeader header, LogBuffer buffer, FormatDescriptionLogEvent descriptionEvent,
+                        boolean partial){
+        this(header, buffer, descriptionEvent, false, false);
+    }
+
+    public RowsLogEvent(LogHeader header, LogBuffer buffer, FormatDescriptionLogEvent descriptionEvent, boolean partial,
+                        boolean compress){
+        super(header);
         final int commonHeaderLen = descriptionEvent.commonHeaderLen;
         final int postHeaderLen = descriptionEvent.postHeaderLen[header.type - 1];
         int headerLen = 0;
@@ -153,9 +168,12 @@ public abstract class RowsLogEvent extends LogEvent {
 
         buffer.position(commonHeaderLen + postHeaderLen + headerLen);
         columnLen = (int) buffer.getPackedLong();
+        this.partial = partial;
         columns = buffer.getBitmap(columnLen);
 
-        if (header.type == UPDATE_ROWS_EVENT_V1 || header.type == UPDATE_ROWS_EVENT) {
+        if (header.type == UPDATE_ROWS_EVENT_V1 || header.type == UPDATE_ROWS_EVENT
+            || header.type == PARTIAL_UPDATE_ROWS_EVENT || header.type == UPDATE_ROWS_COMPRESSED_EVENT
+            || header.type == UPDATE_ROWS_COMPRESSED_EVENT_V1) {
             changeColumns = buffer.getBitmap(columnLen);
         } else {
             changeColumns = columns;
@@ -163,11 +181,27 @@ public abstract class RowsLogEvent extends LogEvent {
 
         // XXX: Don't handle buffer in another thread.
         int dataSize = buffer.limit() - buffer.position();
+        if (compress) {
+            // mariadb compress log event
+            // see https://github.com/alibaba/canal/issues/4388
+            buffer = buffer.uncompressBuf();
+            dataSize = buffer.limit();
+            // rewrite type
+            if (postHeaderLen == FormatDescriptionLogEvent.ROWS_HEADER_LEN_V2) {
+                header.type = header.type - WRITE_ROWS_COMPRESSED_EVENT + WRITE_ROWS_EVENT;
+            } else {
+                header.type = header.type - WRITE_ROWS_COMPRESSED_EVENT_V1 + WRITE_ROWS_EVENT_V1;
+            }
+        }
         rowsBuf = buffer.duplicate(dataSize);
     }
 
     public final void fillTable(LogContext context) {
         table = context.getTable(tableId);
+
+        if (table == null) {
+            throw new TableIdNotFoundException("not found tableId:" + tableId);
+        }
 
         // end of statement check:
         if ((flags & RowsLogEvent.STMT_END_F) != 0) {
@@ -175,6 +209,17 @@ public abstract class RowsLogEvent extends LogEvent {
             // delete original table map events stored in the map).
             context.clearAllTables();
         }
+
+        int jsonColumnCount = 0;
+        int columnCnt = table.getColumnCnt();
+        ColumnInfo[] columnInfo = table.getColumnInfo();
+        for (int i = 0; i < columnCnt; i++) {
+            ColumnInfo info = columnInfo[i];
+            if (info.type == LogEvent.MYSQL_TYPE_JSON) {
+                jsonColumnCount++;
+            }
+        }
+        this.jsonColumnCount = jsonColumnCount;
     }
 
     public final long getTableId() {
@@ -193,8 +238,8 @@ public abstract class RowsLogEvent extends LogEvent {
         return changeColumns;
     }
 
-    public final RowsLogBuffer getRowsBuf(String charsetName) {
-        return new RowsLogBuffer(rowsBuf.duplicate(), columnLen, charsetName);
+    public final RowsLogBuffer getRowsBuf(Charset charset) {
+        return new RowsLogBuffer(rowsBuf, columnLen, charset, jsonColumnCount, partial);
     }
 
     public final int getFlags(final int flags) {

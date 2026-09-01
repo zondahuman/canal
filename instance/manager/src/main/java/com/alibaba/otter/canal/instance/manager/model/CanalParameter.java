@@ -9,10 +9,12 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.builder.ToStringBuilder;
 
 import com.alibaba.otter.canal.common.utils.CanalToStringStyle;
+import com.alibaba.otter.canal.parse.driver.mysql.ssl.SslInfo;
+import com.alibaba.otter.canal.parse.driver.mysql.ssl.SslMode;
 
 /**
  * canal运行相关参数
- * 
+ *
  * @author jianghang 2012-7-4 下午02:52:52
  * @version 1.0.0
  */
@@ -28,8 +30,10 @@ public class CanalParameter implements Serializable {
     private Long                     zkClusterId;                                                    // zk集群id，为管理方便
     private List<String>             zkClusters;                                                     // zk集群地址
 
+    private String                   dataDir                            = "../conf";                 // 默认本地文件数据的目录默认是conf
     // meta相关参数
     private MetaMode                 metaMode                           = MetaMode.MEMORY;           // meta机制
+    private Integer                  metaFileFlushPeriod                = 1000;                      // meta刷新间隔
 
     // storage存储
     private Integer                  transactionSize                    = 1024;                      // 支持处理的transaction事务大小
@@ -37,6 +41,7 @@ public class CanalParameter implements Serializable {
     private BatchMode                storageBatchMode                   = BatchMode.MEMSIZE;         // 基于大小返回结果
     private Integer                  memoryStorageBufferSize            = 16 * 1024;                 // 内存存储的buffer大小
     private Integer                  memoryStorageBufferMemUnit         = 1024;                      // 内存存储的buffer内存占用单位，默认为1kb
+    private Boolean                  memoryStorageRawEntry              = Boolean.TRUE;              // 内存存储的对象是否启用raw的ByteString模式
     private String                   fileStorageDirectory;                                           // 文件存储的目录位置
     private Integer                  fileStorageStoreCount;                                          // 每个文件store存储的记录数
     private Integer                  fileStorageRollverCount;                                        // store文件的个数
@@ -53,8 +58,6 @@ public class CanalParameter implements Serializable {
     private Integer                  defaultConnectionTimeoutInSeconds  = 30;                        // sotimeout
     private Integer                  receiveBufferSize                  = 64 * 1024;
     private Integer                  sendBufferSize                     = 64 * 1024;
-    // 编码信息
-    private Byte                     connectionCharsetNumber            = (byte) 33;
     private String                   connectionCharset                  = "UTF-8";
 
     // 数据库信息
@@ -62,6 +65,21 @@ public class CanalParameter implements Serializable {
     private List<List<DataSourcing>> groupDbAddresses;                                               // 数据库链接信息，包含多组信息
     private String                   dbUsername;                                                     // 数据库用户
     private String                   dbPassword;                                                     // 数据库密码
+
+    private String                   sslMode                            = SslMode.DISABLED.name();
+    private String                   tlsVersions;                                                    // 和
+                                                                                                     // enabledTLSProtocols
+                                                                                                     // 同含义，TLSv1.2,TLSv1.3
+    private String                   trustCertificateKeyStoreType;                                   // trustStore
+                                                                                                     // 证书类型，支持 JKS (默认)
+                                                                                                     // 和 PKCS12
+    private String                   trustCertificateKeyStoreUrl;                                    // trustStore 证书路径
+    private String                   trustCertificateKeyStorePassword;                               // trustStore 证书密码
+    private String                   clientCertificateKeyStoreType;                                  // client 证书类型，支持
+                                                                                                     // JKS (默认) 和
+                                                                                                     // PKCS12
+    private String                   clientCertificateKeyStoreUrl;                                   // client 证书路径
+    private String                   clientCertificateKeyStorePassword;                              // client 证书密码
 
     // binlog链接信息
     private IndexMode                indexMode;
@@ -91,20 +109,67 @@ public class CanalParameter implements Serializable {
     private Boolean                  filterTableError                   = Boolean.FALSE;             // 是否忽略表解析异常
     private String                   blackFilter                        = null;                      // 匹配黑名单,忽略解析
 
+    private Boolean                  tsdbEnable                         = Boolean.FALSE;             // 是否开启tableMetaTSDB
+    private String                   tsdbJdbcUrl;
+    private String                   tsdbJdbcUserName;
+    private String                   tsdbJdbcPassword;
+    private Integer                  tsdbSnapshotInterval               = 24;
+    private Integer                  tsdbSnapshotExpire                 = 360;
+    private String                   rdsAccesskey;
+    private String                   rdsSecretkey;
+    private String                   rdsInstanceId;
+    private Boolean                  gtidEnable                         = Boolean.FALSE;             // 是否开启gtid
     // ================================== 兼容字段处理
     private InetSocketAddress        masterAddress;                                                  // 主库信息
     private String                   masterUsername;                                                 // 帐号
     private String                   masterPassword;                                                 // 密码
+    private String                   masterSslMode                      = SslMode.DISABLED.name();
+    private String                   masterTlsVersions;                                              // 和
+                                                                                                     // enabledTLSProtocols
+                                                                                                     // 同含义，TLSv1.2,TLSv1.3
+    private String                   masterTrustCertificateKeyStoreType;                             // trustStore
+                                                                                                     // 证书类型，支持 JKS (默认)
+                                                                                                     // 和 PKCS12
+    private String                   masterTrustCertificateKeyStoreUrl;                              // trustStore 证书路径
+    private String                   masterTrustCertificateKeyStorePassword;                         // trustStore 证书密码
+    private String                   masterClientCertificateKeyStoreType;                            // client 证书类型，支持
+                                                                                                     // JKS (默认) 和
+                                                                                                     // PKCS12
+    private String                   masterClientCertificateKeyStoreUrl;                             // client 证书路径
+    private String                   masterClientCertificateKeyStorePassword;                        // client 证书密码
 
     private InetSocketAddress        standbyAddress;                                                 // 备库信息
     private String                   standbyUsername;                                                // 帐号
     private String                   standbyPassword;
+    private String                   standbySslMode                     = SslMode.DISABLED.name();
+    private String                   standbyTlsVersions;                                             // 和
+                                                                                                     // enabledTLSProtocols
+                                                                                                     // 同含义，TLSv1.2,TLSv1.3
+    private String                   standbyTrustCertificateKeyStoreType;                            // trustStore
+                                                                                                     // 证书类型，支持 JKS (默认)
+                                                                                                     // 和 PKCS12
+    private String                   standbyTrustCertificateKeyStoreUrl;                             // trustStore 证书路径
+    private String                   standbyTrustCertificateKeyStorePassword;                        // trustStore 证书密码
+    private String                   standbyClientCertificateKeyStoreType;                           // client 证书类型，支持
+                                                                                                     // JKS (默认) 和
+                                                                                                     // PKCS12
+    private String                   standbyClientCertificateKeyStoreUrl;                            // client 证书路径
+    private String                   standbyClientCertificateKeyStorePassword;                       // client 证书密码
+
     private String                   masterLogfileName                  = null;                      // master起始位置
     private Long                     masterLogfileOffest                = null;
     private Long                     masterTimestamp                    = null;
     private String                   standbyLogfileName                 = null;                      // standby起始位置
     private Long                     standbyLogfileOffest               = null;
     private Long                     standbyTimestamp                   = null;
+    private Boolean                  parallel                           = Boolean.FALSE;
+
+    // 自定义alarmHandler类全路径
+    private String                   alarmHandlerClass                  = null;
+    // 自定义alarmHandler插件文件夹路径
+    private String                   alarmHandlerPluginDir              = null;
+    // 是否支持多流消费
+    private Boolean                  multiStreamEnable                  = Boolean.FALSE;
 
     public static enum RunMode {
 
@@ -162,6 +227,7 @@ public class CanalParameter implements Serializable {
     }
 
     public static enum StorageMode {
+
         /** 内存存储模式 */
         MEMORY,
         /** 文件存储模式 */
@@ -184,6 +250,7 @@ public class CanalParameter implements Serializable {
     }
 
     public static enum StorageScavengeMode {
+
         /** 在存储满的时候触发 */
         ON_FULL,
         /** 在每次有ack请求时触发 */
@@ -211,6 +278,7 @@ public class CanalParameter implements Serializable {
     }
 
     public static enum SourcingType {
+
         /** mysql DB */
         MYSQL,
         /** localBinLog */
@@ -238,12 +306,15 @@ public class CanalParameter implements Serializable {
     }
 
     public static enum MetaMode {
+
         /** 内存存储模式 */
         MEMORY,
         /** 文件存储模式 */
         ZOOKEEPER,
         /** 混合模式，内存+文件 */
-        MIXED;
+        MIXED,
+        /** 本地文件存储模式 */
+        LOCAL_FILE;
 
         public boolean isMemory() {
             return this.equals(MetaMode.MEMORY);
@@ -256,9 +327,14 @@ public class CanalParameter implements Serializable {
         public boolean isMixed() {
             return this.equals(MetaMode.MIXED);
         }
+
+        public boolean isLocalFile() {
+            return this.equals(MetaMode.LOCAL_FILE);
+        }
     }
 
     public static enum IndexMode {
+
         /** 内存存储模式 */
         MEMORY,
         /** 文件存储模式 */
@@ -292,6 +368,7 @@ public class CanalParameter implements Serializable {
     }
 
     public static enum BatchMode {
+
         /** 对象数量 */
         ITEMSIZE,
 
@@ -309,7 +386,7 @@ public class CanalParameter implements Serializable {
 
     /**
      * 数据来源描述
-     * 
+     *
      * @author jianghang 2012-12-26 上午11:05:20
      * @version 4.1.5
      */
@@ -388,6 +465,22 @@ public class CanalParameter implements Serializable {
 
     public StorageMode getStorageMode() {
         return storageMode;
+    }
+
+    public String getDataDir() {
+        return dataDir;
+    }
+
+    public void setDataDir(String dataDir) {
+        this.dataDir = dataDir;
+    }
+
+    public Integer getMetaFileFlushPeriod() {
+        return metaFileFlushPeriod;
+    }
+
+    public void setMetaFileFlushPeriod(Integer metaFileFlushPeriod) {
+        this.metaFileFlushPeriod = metaFileFlushPeriod;
     }
 
     public void setStorageMode(StorageMode storageMode) {
@@ -488,14 +581,6 @@ public class CanalParameter implements Serializable {
 
     public void setSendBufferSize(Integer sendBufferSize) {
         this.sendBufferSize = sendBufferSize;
-    }
-
-    public Byte getConnectionCharsetNumber() {
-        return connectionCharsetNumber;
-    }
-
-    public void setConnectionCharsetNumber(Byte connectionCharsetNumber) {
-        this.connectionCharsetNumber = connectionCharsetNumber;
     }
 
     public String getConnectionCharset() {
@@ -620,7 +705,7 @@ public class CanalParameter implements Serializable {
 
     public List<InetSocketAddress> getDbAddresses() {
         if (dbAddresses == null) {
-            dbAddresses = new ArrayList<InetSocketAddress>();
+            dbAddresses = new ArrayList<>();
             if (masterAddress != null) {
                 dbAddresses.add(masterAddress);
             }
@@ -634,22 +719,22 @@ public class CanalParameter implements Serializable {
 
     public List<List<DataSourcing>> getGroupDbAddresses() {
         if (groupDbAddresses == null) {
-            groupDbAddresses = new ArrayList<List<DataSourcing>>();
+            groupDbAddresses = new ArrayList<>();
             if (dbAddresses != null) {
                 for (InetSocketAddress address : dbAddresses) {
-                    List<DataSourcing> groupAddresses = new ArrayList<DataSourcing>();
+                    List<DataSourcing> groupAddresses = new ArrayList<>();
                     groupAddresses.add(new DataSourcing(sourcingType, address));
                     groupDbAddresses.add(groupAddresses);
                 }
             } else {
                 if (masterAddress != null) {
-                    List<DataSourcing> groupAddresses = new ArrayList<DataSourcing>();
+                    List<DataSourcing> groupAddresses = new ArrayList<>();
                     groupAddresses.add(new DataSourcing(sourcingType, masterAddress));
                     groupDbAddresses.add(groupAddresses);
                 }
 
                 if (standbyAddress != null) {
-                    List<DataSourcing> groupAddresses = new ArrayList<DataSourcing>();
+                    List<DataSourcing> groupAddresses = new ArrayList<>();
                     groupAddresses.add(new DataSourcing(sourcingType, standbyAddress));
                     groupDbAddresses.add(groupAddresses);
                 }
@@ -688,9 +773,137 @@ public class CanalParameter implements Serializable {
         this.dbPassword = dbPassword;
     }
 
+    public SslInfo getSslInfo() {
+        if (dbUsername == null) {
+            if (masterUsername != null) {
+                return new SslInfo(SslMode.valueOf(masterSslMode),
+                    masterTlsVersions,
+                    masterTrustCertificateKeyStoreType,
+                    masterTrustCertificateKeyStoreUrl,
+                    masterTrustCertificateKeyStorePassword,
+                    masterClientCertificateKeyStoreType,
+                    masterClientCertificateKeyStoreUrl,
+                    masterClientCertificateKeyStorePassword);
+            } else {
+                return new SslInfo(SslMode.valueOf(standbySslMode),
+                    standbyTlsVersions,
+                    standbyTrustCertificateKeyStoreType,
+                    standbyTrustCertificateKeyStoreUrl,
+                    standbyTrustCertificateKeyStorePassword,
+                    standbyClientCertificateKeyStoreType,
+                    standbyClientCertificateKeyStoreUrl,
+                    standbyClientCertificateKeyStorePassword);
+            }
+        }
+        return new SslInfo(SslMode.valueOf(sslMode),
+            tlsVersions,
+            trustCertificateKeyStoreType,
+            trustCertificateKeyStoreUrl,
+            trustCertificateKeyStorePassword,
+            clientCertificateKeyStoreType,
+            clientCertificateKeyStoreUrl,
+            clientCertificateKeyStorePassword);
+    }
+
+    public void setSslMode(String sslMode) {
+        this.sslMode = sslMode;
+    }
+
+    public void setTlsVersions(String tlsVersions) {
+        this.tlsVersions = tlsVersions;
+    }
+
+    public void setTrustCertificateKeyStoreType(String trustCertificateKeyStoreType) {
+        this.trustCertificateKeyStoreType = trustCertificateKeyStoreType;
+    }
+
+    public void setTrustCertificateKeyStoreUrl(String trustCertificateKeyStoreUrl) {
+        this.trustCertificateKeyStoreUrl = trustCertificateKeyStoreUrl;
+    }
+
+    public void setTrustCertificateKeyStorePassword(String trustCertificateKeyStorePassword) {
+        this.trustCertificateKeyStorePassword = trustCertificateKeyStorePassword;
+    }
+
+    public void setClientCertificateKeyStoreType(String clientCertificateKeyStoreType) {
+        this.clientCertificateKeyStoreType = clientCertificateKeyStoreType;
+    }
+
+    public void setClientCertificateKeyStoreUrl(String clientCertificateKeyStoreUrl) {
+        this.clientCertificateKeyStoreUrl = clientCertificateKeyStoreUrl;
+    }
+
+    public void setClientCertificateKeyStorePassword(String clientCertificateKeyStorePassword) {
+        this.clientCertificateKeyStorePassword = clientCertificateKeyStorePassword;
+    }
+
+    public void setMasterSslMode(String masterSslMode) {
+        this.masterSslMode = masterSslMode;
+    }
+
+    public void setMasterTlsVersions(String masterTlsVersions) {
+        this.masterTlsVersions = masterTlsVersions;
+    }
+
+    public void setMasterTrustCertificateKeyStoreType(String masterTrustCertificateKeyStoreType) {
+        this.masterTrustCertificateKeyStoreType = masterTrustCertificateKeyStoreType;
+    }
+
+    public void setMasterTrustCertificateKeyStoreUrl(String masterTrustCertificateKeyStoreUrl) {
+        this.masterTrustCertificateKeyStoreUrl = masterTrustCertificateKeyStoreUrl;
+    }
+
+    public void setMasterTrustCertificateKeyStorePassword(String masterTrustCertificateKeyStorePassword) {
+        this.masterTrustCertificateKeyStorePassword = masterTrustCertificateKeyStorePassword;
+    }
+
+    public void setMasterClientCertificateKeyStoreType(String masterClientCertificateKeyStoreType) {
+        this.masterClientCertificateKeyStoreType = masterClientCertificateKeyStoreType;
+    }
+
+    public void setMasterClientCertificateKeyStoreUrl(String masterClientCertificateKeyStoreUrl) {
+        this.masterClientCertificateKeyStoreUrl = masterClientCertificateKeyStoreUrl;
+    }
+
+    public void setMasterClientCertificateKeyStorePassword(String masterClientCertificateKeyStorePassword) {
+        this.masterClientCertificateKeyStorePassword = masterClientCertificateKeyStorePassword;
+    }
+
+    public void setStandbySslMode(String standbySslMode) {
+        this.standbySslMode = standbySslMode;
+    }
+
+    public void setStandbyTlsVersions(String standbyTlsVersions) {
+        this.standbyTlsVersions = standbyTlsVersions;
+    }
+
+    public void setStandbyTrustCertificateKeyStoreType(String standbyTrustCertificateKeyStoreType) {
+        this.standbyTrustCertificateKeyStoreType = standbyTrustCertificateKeyStoreType;
+    }
+
+    public void setStandbyTrustCertificateKeyStoreUrl(String standbyTrustCertificateKeyStoreUrl) {
+        this.standbyTrustCertificateKeyStoreUrl = standbyTrustCertificateKeyStoreUrl;
+    }
+
+    public void setStandbyTrustCertificateKeyStorePassword(String standbyTrustCertificateKeyStorePassword) {
+        this.standbyTrustCertificateKeyStorePassword = standbyTrustCertificateKeyStorePassword;
+    }
+
+    public void setStandbyClientCertificateKeyStoreType(String standbyClientCertificateKeyStoreType) {
+        this.standbyClientCertificateKeyStoreType = standbyClientCertificateKeyStoreType;
+    }
+
+    public void setStandbyClientCertificateKeyStoreUrl(String standbyClientCertificateKeyStoreUrl) {
+        this.standbyClientCertificateKeyStoreUrl = standbyClientCertificateKeyStoreUrl;
+    }
+
+    public void setStandbyClientCertificateKeyStorePassword(String standbyClientCertificateKeyStorePassword) {
+        this.standbyClientCertificateKeyStorePassword = standbyClientCertificateKeyStorePassword;
+    }
+
     public List<String> getPositions() {
         if (positions == null) {
-            positions = new ArrayList<String>();
+            positions = new ArrayList<>();
             String masterPosition = buildPosition(masterLogfileName, masterLogfileOffest, masterTimestamp);
             if (masterPosition != null) {
                 positions.add(masterPosition);
@@ -857,6 +1070,126 @@ public class CanalParameter implements Serializable {
 
     public void setBlackFilter(String blackFilter) {
         this.blackFilter = blackFilter;
+    }
+
+    public Boolean getTsdbEnable() {
+        return tsdbEnable;
+    }
+
+    public void setTsdbEnable(Boolean tsdbEnable) {
+        this.tsdbEnable = tsdbEnable;
+    }
+
+    public String getTsdbJdbcUrl() {
+        return tsdbJdbcUrl;
+    }
+
+    public void setTsdbJdbcUrl(String tsdbJdbcUrl) {
+        this.tsdbJdbcUrl = tsdbJdbcUrl;
+    }
+
+    public String getTsdbJdbcUserName() {
+        return tsdbJdbcUserName;
+    }
+
+    public void setTsdbJdbcUserName(String tsdbJdbcUserName) {
+        this.tsdbJdbcUserName = tsdbJdbcUserName;
+    }
+
+    public String getTsdbJdbcPassword() {
+        return tsdbJdbcPassword;
+    }
+
+    public void setTsdbJdbcPassword(String tsdbJdbcPassword) {
+        this.tsdbJdbcPassword = tsdbJdbcPassword;
+    }
+
+    public String getRdsAccesskey() {
+        return rdsAccesskey;
+    }
+
+    public void setRdsAccesskey(String rdsAccesskey) {
+        this.rdsAccesskey = rdsAccesskey;
+    }
+
+    public String getRdsSecretkey() {
+        return rdsSecretkey;
+    }
+
+    public void setRdsSecretkey(String rdsSecretkey) {
+        this.rdsSecretkey = rdsSecretkey;
+    }
+
+    public String getRdsInstanceId() {
+        return rdsInstanceId;
+    }
+
+    public void setRdsInstanceId(String rdsInstanceId) {
+        this.rdsInstanceId = rdsInstanceId;
+    }
+
+    public Boolean getGtidEnable() {
+        return gtidEnable;
+    }
+
+    public void setGtidEnable(Boolean gtidEnable) {
+        this.gtidEnable = gtidEnable;
+    }
+
+    public Boolean getMemoryStorageRawEntry() {
+        return memoryStorageRawEntry;
+    }
+
+    public void setMemoryStorageRawEntry(Boolean memoryStorageRawEntry) {
+        this.memoryStorageRawEntry = memoryStorageRawEntry;
+    }
+
+    public Integer getTsdbSnapshotInterval() {
+        return tsdbSnapshotInterval;
+    }
+
+    public void setTsdbSnapshotInterval(Integer tsdbSnapshotInterval) {
+        this.tsdbSnapshotInterval = tsdbSnapshotInterval;
+    }
+
+    public Integer getTsdbSnapshotExpire() {
+        return tsdbSnapshotExpire;
+    }
+
+    public void setTsdbSnapshotExpire(Integer tsdbSnapshotExpire) {
+        this.tsdbSnapshotExpire = tsdbSnapshotExpire;
+    }
+
+    public Boolean getParallel() {
+        return parallel;
+    }
+
+    public void setParallel(Boolean parallel) {
+        this.parallel = parallel;
+    }
+
+    public String getAlarmHandlerClass() {
+        return alarmHandlerClass;
+    }
+
+    public void setAlarmHandlerClass(String alarmHandlerClass) {
+        this.alarmHandlerClass = alarmHandlerClass;
+    }
+
+    public String getAlarmHandlerPluginDir() {
+        return alarmHandlerPluginDir;
+    }
+
+    public void setAlarmHandlerPluginDir(String alarmHandlerPluginDir) {
+        this.alarmHandlerPluginDir = alarmHandlerPluginDir;
+    }
+
+    public Boolean getMultiStreamEnable() {
+        return multiStreamEnable;
+    }
+
+    public void setMultiStreamEnable(Boolean multiStreamEnable) {
+        this.multiStreamEnable = multiStreamEnable;
     }
 
     public String toString() {

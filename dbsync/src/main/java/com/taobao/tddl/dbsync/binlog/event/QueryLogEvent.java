@@ -1,7 +1,9 @@
 package com.taobao.tddl.dbsync.binlog.event;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
 import com.taobao.tddl.dbsync.binlog.CharsetConversion;
 import com.taobao.tddl.dbsync.binlog.LogBuffer;
@@ -280,67 +282,30 @@ public class QueryLogEvent extends LogEvent {
      * packet (i.e. a query) sent from client to master; First, an auxiliary
      * log_event status vars estimation:
      */
-    public static final int MAX_SIZE_LOG_EVENT_STATUS = (1 + 4 /* type, flags2 */
-                                                         + 1 + 8 /*
-                                                                  * type,
-                                                                  * sql_mode
-                                                                  */
-                                                         + 1 + 1 + 255 /*
-                                                                        * type,
-                                                                        * length
-                                                                        * ,
-                                                                        * catalog
-                                                                        */
-                                                         + 1 + 4 /*
-                                                                  * type,
-                                                                  * auto_increment
-                                                                  */
-                                                         + 1 + 6 /*
-                                                                  * type,
-                                                                  * charset
-                                                                  */
-                                                         + 1 + 1 + 255 /*
-                                                                        * type,
-                                                                        * length
-                                                                        * ,
-                                                                        * time_zone
-                                                                        */
-                                                         + 1 + 2 /*
-                                                                  * type,
-                                                                  * lc_time_names_number
-                                                                  */
-                                                         + 1 + 2 /*
-                                                                  * type,
-                                                                  * charset_database_number
-                                                                  */
-                                                         + 1 + 8 /*
-                                                                  * type,
-                                                                  * table_map_for_update
-                                                                  */
-                                                         + 1 + 4 /*
-                                                                  * type,
-                                                                  * master_data_written
-                                                                  */
-                                                         /*
-                                                          * type, db_1, db_2,
-                                                          * ...
-                                                          */
-                                                         /* type, microseconds */
-                                                         /*
-                                                          * MariaDb type,
-                                                          * sec_part of NOW()
-                                                          */
-                                                         + 1 + (MAX_DBS_IN_EVENT_MTS * (1 + NAME_LEN)) + 3 + 1 + 16 + 1 + 60/*
-                                                                                                                             * type
-                                                                                                                             * ,
-                                                                                                                             * user_len
-                                                                                                                             * ,
-                                                                                                                             * user
-                                                                                                                             * ,
-                                                                                                                             * host_len
-                                                                                                                             * ,
-                                                                                                                             * host
-                                                                                                                             */);
+    public static final int MAX_SIZE_LOG_EVENT_STATUS = (1 + 4 /* type, flags2 */ + 1 + 8 /* type,sql_mode */ + 1 + 1 + 255 /* type,length, catalog */
+                                                         + 1 + 4 /* type,auto_increment */
+                                                         + 1 + 6 /* type, charset */
+                                                         + 1 + 1 + 255 /* type, length, time_zone */
+                                                         + 1 + 2 /* type, lc_time_names_number */
+                                                         + 1 + 2 /* type, charset_database_number */
+                                                         + 1 + 8 /* type, table_map_for_update */
+                                                         + 1 + 4 /* type,master_data_written */
+                                                         + 1 + 1 + 32 * 3 /* type, user_len, user */
+                                                         + 1 + 255 /* host_len, host */
+                                                         + 1 + 1 + (MAX_DBS_IN_EVENT_MTS * (1 + NAME_LEN)) /* type, db_1, db_2, ... */
+                                                         + 1 + 3 /* type, microseconds */
+                                                         + 1 + 1 /* type, explicit_def..ts*/
+                                                         + 1 + 8 /* type, xid of DDL */
+                                                         + 1 + 2 /* type, default_collation_for_utf8mb4_number */
+                                                         + 1 + 1 /* sql_require_primary_key */
+                                                         + 1 + 1 /* type, default_table_encryption */
+                                                         + 1 + 1 /* opt_flashback_area */
+                                                         + 1 + 1 /* type, opt_index_format_gpp_enabled */
+                                                         + 1 + 1 /* type, opt_index_format_hippo_enabled */
+                                                         + 1 + 1 /* type, opt_index_format_spc_enabled */
+                                                         + 1 + 1 /* type, opt_index_format_panda_enabled */
+                                                         + 1 + 1 + NAME_LEN /* type, length, recycle_bin_table_name */);
+
     /**
      * Fixed data part:
      * <ul>
@@ -397,7 +362,7 @@ public class QueryLogEvent extends LogEvent {
     // inspection by the DBA
     private final long      execTime;
     private final int       errorCode;
-    private final long      sessionId;                                                                                           /* thread_id */
+    private final long      sessionId;                                                                                     /* thread_id */
 
     /**
      * 'flags2' is a second set of flags (on top of those in Log_event), for
@@ -415,14 +380,27 @@ public class QueryLogEvent extends LogEvent {
     private int             clientCharset             = -1;
     private int             clientCollation           = -1;
     private int             serverCollation           = -1;
-    private String          charsetName;
-
+    private int             tvSec                     = -1;
+    private BigInteger      ddlXid                    = BigInteger.valueOf(-1L);
+    private Charset         charset;
     private String          timezone;
+    private boolean         compatiablePercona        = false;
 
     public QueryLogEvent(LogHeader header, LogBuffer buffer, FormatDescriptionLogEvent descriptionEvent)
-                                                                                                        throws IOException{
-        super(header);
+                                                                                                         throws IOException{
+        this(header, buffer, descriptionEvent, false);
+    }
 
+    public QueryLogEvent(LogHeader header, LogBuffer buffer, FormatDescriptionLogEvent descriptionEvent,
+                         boolean compatiablePercona) throws IOException{
+        this(header, buffer, descriptionEvent, compatiablePercona, false);
+    }
+
+    public QueryLogEvent(LogHeader header, LogBuffer buffer, FormatDescriptionLogEvent descriptionEvent,
+                         boolean compatiablePercona,
+                         boolean compress) throws IOException{
+        super(header);
+        this.compatiablePercona = compatiablePercona;
         final int commonHeaderLen = descriptionEvent.commonHeaderLen;
         final int postHeaderLen = descriptionEvent.postHeaderLen[header.type - 1];
         /*
@@ -477,15 +455,20 @@ public class QueryLogEvent extends LogEvent {
         unpackVariables(buffer, end);
         buffer.position(end);
         buffer.limit(limit);
-
         /* A 2nd variable part; this is common to all versions */
-        final int queryLen = dataLen - dbLen - 1;
-        dbname = buffer.getFixString(dbLen + 1);
+        dbname = buffer.getFixName(dbLen + 1);
+        int queryLen = dataLen - dbLen - 1;
+        if (compress) {
+            // mariadb compress log event
+            // see https://github.com/alibaba/canal/issues/4388
+            buffer = buffer.uncompressBuf();
+            queryLen = buffer.limit();
+        }
         if (clientCharset >= 0) {
-            charsetName = CharsetConversion.getJavaCharset(clientCharset);
+            charset = CharsetConversion.getNioCharset(clientCharset);
 
-            if ((charsetName != null) && (Charset.isSupported(charsetName))) {
-                query = buffer.getFixString(queryLen, charsetName);
+            if (charset != null) {
+                query = buffer.getFixString(queryLen, charset);
             } else {
                 logger.warn("unsupported character set in query log: " + "\n    ID = " + clientCharset + ", Charset = "
                             + CharsetConversion.getCharset(clientCharset) + ", Collation = "
@@ -499,26 +482,26 @@ public class QueryLogEvent extends LogEvent {
     }
 
     /* query event post-header */
-    public static final int Q_THREAD_ID_OFFSET          = 0;
-    public static final int Q_EXEC_TIME_OFFSET          = 4;
-    public static final int Q_DB_LEN_OFFSET             = 8;
-    public static final int Q_ERR_CODE_OFFSET           = 9;
-    public static final int Q_STATUS_VARS_LEN_OFFSET    = 11;
-    public static final int Q_DATA_OFFSET               = QUERY_HEADER_LEN;
+    public static final int Q_THREAD_ID_OFFSET                = 0;
+    public static final int Q_EXEC_TIME_OFFSET                = 4;
+    public static final int Q_DB_LEN_OFFSET                   = 8;
+    public static final int Q_ERR_CODE_OFFSET                 = 9;
+    public static final int Q_STATUS_VARS_LEN_OFFSET          = 11;
+    public static final int Q_DATA_OFFSET                     = QUERY_HEADER_LEN;
 
     /* these are codes, not offsets; not more than 256 values (1 byte). */
-    public static final int Q_FLAGS2_CODE               = 0;
-    public static final int Q_SQL_MODE_CODE             = 1;
+    public static final int Q_FLAGS2_CODE                     = 0;
+    public static final int Q_SQL_MODE_CODE                   = 1;
 
     /**
      * Q_CATALOG_CODE is catalog with end zero stored; it is used only by MySQL
      * 5.0.x where 0<=x<=3. We have to keep it to be able to replicate these old
      * masters.
      */
-    public static final int Q_CATALOG_CODE              = 2;
-    public static final int Q_AUTO_INCREMENT            = 3;
-    public static final int Q_CHARSET_CODE              = 4;
-    public static final int Q_TIME_ZONE_CODE            = 5;
+    public static final int Q_CATALOG_CODE                    = 2;
+    public static final int Q_AUTO_INCREMENT                  = 3;
+    public static final int Q_CHARSET_CODE                    = 4;
+    public static final int Q_TIME_ZONE_CODE                  = 5;
 
     /**
      * Q_CATALOG_NZ_CODE is catalog withOUT end zero stored; it is used by MySQL
@@ -528,128 +511,145 @@ public class QueryLogEvent extends LogEvent {
      * would crash (segfault etc) because it would expect a 0 when there is
      * none.
      */
-    public static final int Q_CATALOG_NZ_CODE           = 6;
+    public static final int Q_CATALOG_NZ_CODE                 = 6;
 
-    public static final int Q_LC_TIME_NAMES_CODE        = 7;
+    public static final int Q_LC_TIME_NAMES_CODE              = 7;
 
-    public static final int Q_CHARSET_DATABASE_CODE     = 8;
+    public static final int Q_CHARSET_DATABASE_CODE           = 8;
 
-    public static final int Q_TABLE_MAP_FOR_UPDATE_CODE = 9;
+    public static final int Q_TABLE_MAP_FOR_UPDATE_CODE       = 9;
 
-    public static final int Q_MASTER_DATA_WRITTEN_CODE  = 10;
+    public static final int Q_MASTER_DATA_WRITTEN_CODE        = 10;
 
-    public static final int Q_INVOKER                   = 11;
+    public static final int Q_INVOKER                         = 11;
 
     /**
      * Q_UPDATED_DB_NAMES status variable collects of the updated databases
      * total number and their names to be propagated to the slave in order to
      * facilitate the parallel applying of the Query events.
      */
-    public static final int Q_UPDATED_DB_NAMES          = 12;
+    public static final int Q_UPDATED_DB_NAMES                = 12;
 
-    public static final int Q_MICROSECONDS              = 13;
+    public static final int Q_MICROSECONDS                    = 13;
+    /**
+     * A old (unused now) code for Query_log_event status similar to
+     * G_COMMIT_TS.
+     */
+    public static final int Q_COMMIT_TS                       = 14;
+    /**
+     * A code for Query_log_event status, similar to G_COMMIT_TS2.
+     */
+    public static final int Q_COMMIT_TS2                      = 15;
+    /**
+     * The master connection @@session.explicit_defaults_for_timestamp which is
+     * recorded for queries, CREATE and ALTER table that is defined with a
+     * TIMESTAMP column, that are dependent on that feature. For pre-WL6292
+     * master's the associated with this code value is zero.
+     */
+    public static final int Q_EXPLICIT_DEFAULTS_FOR_TIMESTAMP = 16;
+
+    /**
+     * The variable carries xid info of 2pc-aware (recoverable) DDL queries.
+     */
+    public static final int Q_DDL_LOGGED_WITH_XID             = 17;
+    /**
+     * This variable stores the default collation for the utf8mb4 character set.
+     * Used to support cross-version replication.
+     */
+    public static final int Q_DEFAULT_COLLATION_FOR_UTF8MB4   = 18;
+
+    /**
+     * Replicate sql_require_primary_key.
+     */
+    public static final int Q_SQL_REQUIRE_PRIMARY_KEY         = 19;
+
+    /**
+     * Replicate default_table_encryption.
+     */
+    public static final int Q_DEFAULT_TABLE_ENCRYPTION        = 20;
+
+    /**
+     * Replicate PolarDB-X
+     * 
+     * @since PolarDB-X 8.0.32
+     */
+    public static final int Q_OPT_FLASHBACK_AREA              = 21;
+
+    /**
+     * Replicate PolarDB-X
+     * 
+     * @since PolarDB-X 8.0.32
+     */
+    public static final int Q_OPT_INDEX_FORMAT_GPP_ENABLED    = 22;
+
+    /**
+     * Replicate ddl_skip_rewrite.
+     *
+     * @since percona 8.0.31
+     */
+    public static final int Q_DDL_SKIP_REWRITE                = 21;
+
+    /**
+     * Replicate Q_WSREP_SKIP_READONLY_CHECKS.
+     *
+     * @since percona 8.0.31
+     */
+    public static final int Q_WSREP_SKIP_READONLY_CHECKS      = 128;
 
     /**
      * FROM MariaDB 5.5.34
      */
-    public static final int Q_HRNOW                     = 128;
+    public static final int Q_HRNOW                           = 128;
 
-    private final void unpackVariables(LogBuffer buffer, final int end) throws IOException {
-        int code = -1;
-        try {
-            while (buffer.position() < end) {
-                switch (code = buffer.getUint8()) {
-                    case Q_FLAGS2_CODE:
-                        flags2 = buffer.getUint32();
-                        break;
-                    case Q_SQL_MODE_CODE:
-                        sql_mode = buffer.getLong64(); // QQ: Fix when sql_mode
-                                                       // is ulonglong
-                        break;
-                    case Q_CATALOG_NZ_CODE:
-                        catalog = buffer.getString();
-                        break;
-                    case Q_AUTO_INCREMENT:
-                        autoIncrementIncrement = buffer.getUint16();
-                        autoIncrementOffset = buffer.getUint16();
-                        break;
-                    case Q_CHARSET_CODE:
-                        // Charset: 6 byte character set flag.
-                        // 1-2 = character set client
-                        // 3-4 = collation client
-                        // 5-6 = collation server
-                        clientCharset = buffer.getUint16();
-                        clientCollation = buffer.getUint16();
-                        serverCollation = buffer.getUint16();
-                        break;
-                    case Q_TIME_ZONE_CODE:
-                        timezone = buffer.getString();
-                        break;
-                    case Q_CATALOG_CODE: /* for 5.0.x where 0<=x<=3 masters */
-                        final int len = buffer.getUint8();
-                        catalog = buffer.getFixString(len + 1);
-                        break;
-                    case Q_LC_TIME_NAMES_CODE:
-                        // lc_time_names_number = buffer.getUint16();
-                        buffer.forward(2);
-                        break;
-                    case Q_CHARSET_DATABASE_CODE:
-                        // charset_database_number = buffer.getUint16();
-                        buffer.forward(2);
-                        break;
-                    case Q_TABLE_MAP_FOR_UPDATE_CODE:
-                        // table_map_for_update = buffer.getUlong64();
-                        buffer.forward(8);
-                        break;
-                    case Q_MASTER_DATA_WRITTEN_CODE:
-                        // data_written = master_data_written =
-                        // buffer.getUint32();
-                        buffer.forward(4);
-                        break;
-                    case Q_INVOKER:
-                        user = buffer.getString();
-                        host = buffer.getString();
-                        break;
-                    case Q_MICROSECONDS:
-                        // when.tv_usec= uint3korr(pos);
-                        buffer.forward(3);
-                        break;
-                    case Q_UPDATED_DB_NAMES:
-                        int mtsAccessedDbs = buffer.getUint8();
-                        /**
-                         * Notice, the following check is positive also in case
-                         * of the master's MAX_DBS_IN_EVENT_MTS > the slave's
-                         * one and the event contains e.g the master's
-                         * MAX_DBS_IN_EVENT_MTS db:s.
-                         */
-                        if (mtsAccessedDbs > MAX_DBS_IN_EVENT_MTS) {
-                            mtsAccessedDbs = OVER_MAX_DBS_IN_EVENT_MTS;
-                            break;
-                        }
-                        String mtsAccessedDbNames[] = new String[mtsAccessedDbs];
-                        for (int i = 0; i < mtsAccessedDbs && buffer.position() < end; i++) {
-                            int length = end - buffer.position();
-                            mtsAccessedDbNames[i] = buffer.getFixString(length < NAME_LEN ? length : NAME_LEN);
-                        }
-                        break;
-                    case Q_HRNOW:
-                        // int when_sec_part = buffer.getUint24();
-                        buffer.forward(3);
-                        break;
-                    default:
-                        /*
-                         * That's why you must write status vars in growing
-                         * order of code
-                         */
-                        if (logger.isDebugEnabled()) logger.debug("Query_log_event has unknown status vars (first has code: "
-                                                                  + code + "), skipping the rest of them");
-                        break; // Break loop
-                }
-            }
-        } catch (RuntimeException e) {
-            throw new IOException("Read " + findCodeName(code) + " error: " + e.getMessage(), e);
-        }
-    }
+    /**
+     * Support MariaDB 10.10.1
+     */
+    public static final int Q_XID                             = 129;
+
+    public static final int Q_GTID_FLAGS3                     = 130;
+
+    public static final int Q_CHARACTER_SET_COLLATIONS        = 131;
+
+    /**
+     * support PolarDB-X used for storing snapshot tso or commit tso snapshot tso is
+     * stored in XA End Event with Query_log commit tso is stored in XA Commit Event
+     * with Query_log
+     */
+    public static final int Q_LIZARD_COMMIT_GCN               = 200;
+
+    public static final int Q_LIZARD_PREPARE_GCN              = 201;
+
+    /**
+     * Replicate recycle_bin_table_name.
+     */
+    /**
+     * Replicate opt_index_format_spc_enabled.
+     *
+     * @since PolarDB-X
+     */
+    public static final int Q_OPT_INDEX_FORMAT_SPC_ENABLED    = 252;
+
+    /**
+     * Replicate opt_index_format_hippo_enabled.
+     *
+     * @since PolarDB-X
+     */
+    public static final int Q_OPT_INDEX_FORMAT_HIPPO_ENABLED  = 253;
+
+    /*
+      Replicate recycle_bin_table_name.
+
+      @since PolarDB-X
+    */
+    public static final int Q_OPT_RECYCLE_BIN_TABLE_NAME      = 254;
+
+    /*
+      Replicate opt_index_format_panda_enabled.
+      Private codes are allocated from 255 downward (deployment order).
+
+      @since PolarDB-X
+    */
+    public static final int Q_OPT_INDEX_FORMAT_PANDA_ENABLED  = 255;
 
     private static final String findCodeName(final int code) {
         switch (code) {
@@ -675,12 +675,243 @@ public class QueryLogEvent extends LogEvent {
                 return "Q_TABLE_MAP_FOR_UPDATE_CODE";
             case Q_MASTER_DATA_WRITTEN_CODE:
                 return "Q_MASTER_DATA_WRITTEN_CODE";
-            case Q_UPDATED_DB_NAMES:
-                return "Q_UPDATED_DB_NAMES";
+            case Q_INVOKER:
+                return "Q_INVOKER";
             case Q_MICROSECONDS:
                 return "Q_MICROSECONDS";
+            case Q_UPDATED_DB_NAMES:
+                return "Q_UPDATED_DB_NAMES";
+            case Q_EXPLICIT_DEFAULTS_FOR_TIMESTAMP:
+                return "Q_EXPLICIT_DEFAULTS_FOR_TIMESTAMP";
+            case Q_DDL_LOGGED_WITH_XID:
+                return "Q_DDL_LOGGED_WITH_XID";
+            case Q_DEFAULT_COLLATION_FOR_UTF8MB4:
+                return "Q_DEFAULT_COLLATION_FOR_UTF8MB4";
+            case Q_SQL_REQUIRE_PRIMARY_KEY:
+                return "Q_SQL_REQUIRE_PRIMARY_KEY";
+            case Q_DEFAULT_TABLE_ENCRYPTION:
+                return "Q_DEFAULT_TABLE_ENCRYPTION";
+            case Q_OPT_FLASHBACK_AREA:
+                // or Q_DDL_SKIP_REWRITE
+                return "Q_OPT_FLASHBACK_AREA";
+            case Q_OPT_INDEX_FORMAT_GPP_ENABLED:
+                return "Q_OPT_INDEX_FORMAT_GPP_ENABLED";
+            case Q_OPT_INDEX_FORMAT_SPC_ENABLED:
+                return "Q_OPT_INDEX_FORMAT_SPC_ENABLED";
+            case Q_OPT_INDEX_FORMAT_HIPPO_ENABLED:
+                return "Q_OPT_INDEX_FORMAT_HIPPO_ENABLED";
+            case Q_OPT_RECYCLE_BIN_TABLE_NAME:
+                return "Q_OPT_RECYCLE_BIN_TABLE_NAME";
+            case Q_OPT_INDEX_FORMAT_PANDA_ENABLED:
+                return "Q_OPT_INDEX_FORMAT_PANDA_ENABLED";
+            case Q_HRNOW:
+                // or Q_WSREP_SKIP_READONLY_CHECKS
+                return "Q_HRNOW";
+            case Q_XID:
+                return "Q_XID";
+            case Q_GTID_FLAGS3:
+                return "Q_GTID_FLAGS3";
+            case Q_CHARACTER_SET_COLLATIONS :
+                return "Q_CHARACTER_SET_COLLATIONS";
         }
         return "CODE#" + code;
+    }
+
+    private final void unpackVariables(LogBuffer buffer, final int end) throws IOException {
+        int code = -1;
+        try {
+            while (buffer.position() < end) {
+                switch (code = buffer.getUint8()) {
+                    case Q_FLAGS2_CODE:
+                        flags2 = buffer.getUint32();
+                        break;
+                    case Q_SQL_MODE_CODE:
+                        sql_mode = buffer.getLong64(); // QQ: Fix when sql_mode
+                        // is ulonglong
+                        break;
+                    case Q_CATALOG_NZ_CODE:
+                        catalog = buffer.getName();
+                        break;
+                    case Q_AUTO_INCREMENT:
+                        autoIncrementIncrement = buffer.getUint16();
+                        autoIncrementOffset = buffer.getUint16();
+                        break;
+                    case Q_CHARSET_CODE:
+                        // Charset: 6 byte character set flag.
+                        // 1-2 = character set client
+                        // 3-4 = collation client
+                        // 5-6 = collation server
+                        clientCharset = buffer.getUint16();
+                        clientCollation = buffer.getUint16();
+                        serverCollation = buffer.getUint16();
+                        break;
+                    case Q_TIME_ZONE_CODE:
+                        timezone = buffer.getName();
+                        break;
+                    case Q_CATALOG_CODE: /* for 5.0.x where 0<=x<=3 masters */
+                        final int len = buffer.getUint8();
+                        catalog = buffer.getFixString(len + 1);
+                        break;
+                    case Q_LC_TIME_NAMES_CODE:
+                        // lc_time_names_number = buffer.getUint16();
+                        buffer.forward(2);
+                        break;
+                    case Q_CHARSET_DATABASE_CODE:
+                        // charset_database_number = buffer.getUint16();
+                        buffer.forward(2);
+                        break;
+                    case Q_TABLE_MAP_FOR_UPDATE_CODE:
+                        // table_map_for_update = buffer.getUlong64();
+                        buffer.forward(8);
+                        break;
+                    case Q_MASTER_DATA_WRITTEN_CODE:
+                        // data_written = master_data_written =
+                        // buffer.getUint32();
+                        buffer.forward(4);
+                        break;
+                    case Q_INVOKER:
+                        user = buffer.getName();
+                        host = buffer.getName();
+                        break;
+                    case Q_MICROSECONDS:
+                        // when.tv_usec= uint3korr(pos);
+                        tvSec = buffer.getInt24();
+                        break;
+                    case Q_UPDATED_DB_NAMES:
+                        int mtsAccessedDbs = buffer.getUint8();
+                        /**
+                         * Notice, the following check is positive also in case
+                         * of the master's MAX_DBS_IN_EVENT_MTS > the slave's
+                         * one and the event contains e.g the master's
+                         * MAX_DBS_IN_EVENT_MTS db:s.
+                         */
+                        if (mtsAccessedDbs > MAX_DBS_IN_EVENT_MTS) {
+                            mtsAccessedDbs = OVER_MAX_DBS_IN_EVENT_MTS;
+                            break;
+                        }
+                        String mtsAccessedDbNames[] = new String[mtsAccessedDbs];
+                        for (int i = 0; i < mtsAccessedDbs && buffer.position() < end; i++) {
+                            int length = end - buffer.position();
+                            mtsAccessedDbNames[i] = buffer.getFixName(length < NAME_LEN ? length : NAME_LEN);
+                        }
+                        break;
+                    case Q_EXPLICIT_DEFAULTS_FOR_TIMESTAMP:
+                        // thd->variables.explicit_defaults_for_timestamp
+                        buffer.forward(1);
+                        break;
+                    case Q_DDL_LOGGED_WITH_XID:
+                        ddlXid = buffer.getUlong64();
+                        break;
+                    case Q_DEFAULT_COLLATION_FOR_UTF8MB4:
+                        // int2store(start,
+                        // default_collation_for_utf8mb4_number);
+                        buffer.forward(2);
+                        break;
+                    case Q_SQL_REQUIRE_PRIMARY_KEY:
+                        // *start++ = thd->variables.sql_require_primary_key;
+                        buffer.forward(1);
+                        break;
+                    case Q_DEFAULT_TABLE_ENCRYPTION:
+                        // *start++ = thd->variables.default_table_encryption;
+                        buffer.forward(1);
+                        break;
+                    case Q_OPT_FLASHBACK_AREA:
+                        if (compatiablePercona) {
+                            // percona
+                            // *start++ = thd->variables.binlog_ddl_skip_rewrite;
+                            buffer.forward(1);
+                        } else {
+                            // PolarDB-X
+                            // *start++ = thd->variables.opt_flashback_area;
+                            buffer.forward(1);
+                        }
+                        break;
+                    case Q_OPT_INDEX_FORMAT_GPP_ENABLED :
+                        // *start++ = thd->variables.opt_index_format_gpp_enabled;
+                        buffer.forward(1);
+                        break;
+                    case Q_HRNOW:
+                        // https://github.com/alibaba/canal/issues/4940
+                        // percona 和 mariadb各自扩展mysql binlog的格式后有冲突
+                        // 需要精确识别一下数据库类型做兼容处理
+                        if (compatiablePercona) {
+                            // percona 8.0.31
+                            // Q_WSREP_SKIP_READONLY_CHECKS *start++ = 1;
+                            buffer.forward(1);
+                        } else {
+                            // int when_sec_part = buffer.getUint24();
+                            buffer.forward(3);
+                        }
+                        break;
+                    case Q_XID:
+                        // xid= uint8korr(pos);
+                        buffer.forward(8);
+                        break;
+                    case Q_GTID_FLAGS3:
+                        // gtid_flags_extra= *pos++;
+                        // if (gtid_flags_extra & (Gtid_log_event::FL_COMMIT_ALTER_E1 |
+                        // Gtid_log_event::FL_ROLLBACK_ALTER_E1)) {
+                        // sa_seq_no = uint8korr(pos);
+                        // pos+= 8;
+                        // }
+                        int gtid_flags_extra = buffer.getUint8();
+                        final int FL_COMMIT_ALTER_E1= 4;
+                        final int FL_ROLLBACK_ALTER_E1= 8;
+                        if ((gtid_flags_extra & (FL_COMMIT_ALTER_E1 | FL_ROLLBACK_ALTER_E1))> 0) {
+                            buffer.forward(8);
+                        }
+                        break;
+                    case Q_CHARACTER_SET_COLLATIONS :
+                        // mariadb
+                        int count = buffer.getUint8();
+                        // character_set_collations= Lex_cstring((const char *) pos0 , (const char *) pos);
+                        buffer.forward(count * 4);
+                        break;
+                    case Q_LIZARD_COMMIT_GCN:
+                        // commitGCN = buffer.getLong64();
+                        buffer.forward(8);
+                        break;
+                    case Q_LIZARD_PREPARE_GCN:
+                        // prepareGCN = buffer.getLong64();
+                        buffer.forward(8);
+                        break;
+                    case Q_OPT_INDEX_FORMAT_SPC_ENABLED:
+                        // *start++ = thd->variables.opt_index_format_spc_enabled;
+                        buffer.forward(1);
+                        break;
+                    case Q_OPT_INDEX_FORMAT_HIPPO_ENABLED:
+                        // *start++ = thd->variables.opt_index_format_hippo_enabled;
+                        buffer.forward(1);
+                        break;
+                    case Q_OPT_RECYCLE_BIN_TABLE_NAME:
+                        int recycle_bin_table_name_len = buffer.getUint8();
+                        String recycle_bin_table_name = null;
+                        if (recycle_bin_table_name_len > 0) {
+                            if (charset != null) {
+                                recycle_bin_table_name = buffer.getFixLengthString(recycle_bin_table_name_len, charset);
+                            } else {
+                                recycle_bin_table_name = buffer.getFixLengthString(recycle_bin_table_name_len,
+                                    StandardCharsets.ISO_8859_1);
+                            }
+                        }
+                        break;
+                    case Q_OPT_INDEX_FORMAT_PANDA_ENABLED:
+                        // *start++ = thd->variables.opt_index_format_panda_enabled;
+                        buffer.forward(1);
+                        break;
+                    default:
+                        /*
+                         * That's why you must write status vars in growing
+                         * order of code
+                         */
+                        logger.error("Query_log_event has unknown status vars (first has code: " + code
+                                     + "), skipping the rest of them");
+                        return; // Break loop
+                }
+            }
+        } catch (RuntimeException e) {
+            throw new IOException("Read " + findCodeName(code) + " error: " + e.getMessage(), e);
+        }
     }
 
     public final String getUser() {
@@ -726,8 +957,8 @@ public class QueryLogEvent extends LogEvent {
         return autoIncrementOffset;
     }
 
-    public final String getCharsetName() {
-        return charsetName;
+    public final Charset getCharset() {
+        return charset;
     }
 
     public final String getTimezone() {
@@ -759,6 +990,14 @@ public class QueryLogEvent extends LogEvent {
      */
     public final int getServerCollation() {
         return serverCollation;
+    }
+
+    public int getTvSec() {
+        return tvSec;
+    }
+
+    public BigInteger getDdlXid() {
+        return ddlXid;
     }
 
     /**

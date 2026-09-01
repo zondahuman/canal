@@ -1,7 +1,6 @@
 package com.alibaba.otter.canal.filter;
 
 import org.junit.Assert;
-
 import org.junit.Test;
 
 import com.alibaba.otter.canal.filter.aviater.AviaterELFilter;
@@ -51,6 +50,12 @@ public class AviaterFilterTest {
         result = filter.filter("s3.t2");
         Assert.assertEquals(false, result);
 
+        result = filter.filter("S1.S2");
+        Assert.assertEquals(true, result);
+
+        result = filter.filter("S2.S1");
+        Assert.assertEquals(true, result);
+
         AviaterRegexFilter filter2 = new AviaterRegexFilter("s1\\..*,s2.t1");
 
         result = filter2.filter("s1.t1");
@@ -70,6 +75,28 @@ public class AviaterFilterTest {
         AviaterRegexFilter filter4 = new AviaterRegexFilter("otter2.otter_stability1|otter1.otter_stability1|retl.retl_mark|retl.retl_buffer|retl.xdual");
         result = filter4.filter("otter1.otter_stability1");
         Assert.assertEquals(true, result);
+    }
+
+    @Test
+    public void test_regex_with_quantifier_comma() {
+        // fix issue #5442: comma inside {n,m} quantifier should not split the pattern
+        AviaterRegexFilter filter = new AviaterRegexFilter("test\\.order_\\d{1,2}");
+        Assert.assertTrue(filter.filter("test.order_5"));
+        Assert.assertTrue(filter.filter("test.order_42"));
+        Assert.assertFalse(filter.filter("test.order_123"));
+        Assert.assertFalse(filter.filter("test.order_"));
+
+        // multiple patterns combined with quantifier should still split correctly
+        AviaterRegexFilter filter2 = new AviaterRegexFilter("test\\.order_\\d{1,2},test\\.user_\\d+");
+        Assert.assertTrue(filter2.filter("test.order_7"));
+        Assert.assertTrue(filter2.filter("test.user_99"));
+        Assert.assertFalse(filter2.filter("test.order_123"));
+
+        // open-ended quantifier {n,}
+        AviaterRegexFilter filter3 = new AviaterRegexFilter("test\\.t_\\d{2,}");
+        Assert.assertTrue(filter3.filter("test.t_12"));
+        Assert.assertTrue(filter3.filter("test.t_123"));
+        Assert.assertFalse(filter3.filter("test.t_1"));
     }
 
     @Test

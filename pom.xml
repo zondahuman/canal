@@ -4,13 +4,8 @@
     <artifactId>canal</artifactId>
     <packaging>pom</packaging>
     <name>canal module for otter ${project.version}</name>
-    <version>1.0.23-SNAPSHOT</version>
+    <version>1.1.9-SNAPSHOT</version>
     <url>https://github.com/alibaba/canal</url>
-    <parent>
-        <groupId>org.sonatype.oss</groupId>
-        <artifactId>oss-parent</artifactId>
-        <version>7</version>
-    </parent>
     <developers>
         <developer>
             <name>agapple</name>
@@ -48,7 +43,7 @@
     <repositories>
         <repository>
             <id>central</id>
-            <url>http://repo1.maven.org/maven2</url>
+            <url>https://repo1.maven.org/maven2</url>
             <releases>
                 <enabled>true</enabled>
             </releases>
@@ -58,44 +53,12 @@
         </repository>
         <repository>
             <id>java.net</id>
-            <url>http://download.java.net/maven/2/</url>
+            <url>https://download.java.net/maven/2/</url>
             <releases>
                 <enabled>true</enabled>
             </releases>
             <snapshots>
                 <enabled>false</enabled>
-            </snapshots>
-        </repository>
-        <repository>
-            <id>alibaba</id>
-            <url>http://code.alibabatech.com/mvn/releases/</url>
-            <releases>
-                <enabled>true</enabled>
-            </releases>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </repository>
-        <repository>
-            <id>sonatype</id>
-            <name>sonatype</name>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-            <releases>
-                <enabled>false</enabled>
-            </releases>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
-        </repository>
-        <repository>
-            <id>sonatype-release</id>
-            <name>sonatype-release</name>
-            <url>https://oss.sonatype.org/service/local/repositories/releases/content</url>
-            <releases>
-                <enabled>false</enabled>
-            </releases>
-            <snapshots>
-                <enabled>true</enabled>
             </snapshots>
         </repository>
     </repositories>
@@ -103,12 +66,28 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!--maven properties-->
-        <maven.test.skip>true</maven.test.skip>
         <downloadSources>true</downloadSources>
         <!-- compiler settings properties -->
-        <java_source_version>1.6</java_source_version>
-        <java_target_version>1.6</java_target_version>
+        <java_source_version>1.8</java_source_version>
+        <java_target_version>1.8</java_target_version>
         <file_encoding>UTF-8</file_encoding>
+        <javadoc_skip>true</javadoc_skip>
+        <spring_version>5.3.26</spring_version>
+        <log4j_version>2.17.0</log4j_version>
+        <rocketmq_version>4.9.8</rocketmq_version>
+        <rabbitmq_version>5.18.0</rabbitmq_version>
+        <mq_amqp_client>1.0.3</mq_amqp_client>
+        <kafka_version>2.4.0</kafka_version>
+        <pulsar_version>2.11.4</pulsar_version>
+        <mysql_driver_version>5.1.48</mysql_driver_version>
+        <maven-jacoco-plugin.version>0.8.3</maven-jacoco-plugin.version>
+        <maven-surefire.version>2.22.1</maven-surefire.version>
+        <argline>-server -Xms512m -Xmx1024m -Dfile.encoding=UTF-8
+            -Djava.net.preferIPv4Stack=true -XX:MetaspaceSize=128m -XX:MaxMetaspaceSize=256m
+        </argline>
+        <maven-compiler-plugin.version>3.7.0</maven-compiler-plugin.version>
+        <javax.annotation-api.version>1.3.2</javax.annotation-api.version>
+    	<closeTestReports>true</closeTestReports>
     </properties>
 
     <modules>
@@ -126,14 +105,74 @@
         <module>client</module>
         <module>deployer</module>
         <module>example</module>
+        <module>prometheus</module>
+        <module>admin</module>
+        <module>client-adapter</module>
+        <module>connector</module>
     </modules>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>org.springframework</groupId>
-                <artifactId>spring</artifactId>
-                <version>2.5.6</version>
+                <artifactId>spring-core</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-aop</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-context</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-jdbc</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-orm</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-tx</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-web</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-webmvc</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-jcl</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-expression</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-beans</artifactId>
+                <version>${spring_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-test</artifactId>
+                <version>${spring_version}</version>
+                <scope>test</scope>
             </dependency>
             <!-- external -->
             <dependency>
@@ -142,14 +181,44 @@
                 <version>2.6</version>
             </dependency>
             <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>3.7</version>
+            </dependency>
+            <dependency>
                 <groupId>commons-io</groupId>
                 <artifactId>commons-io</artifactId>
                 <version>2.4</version>
             </dependency>
             <dependency>
+                <groupId>commons-codec</groupId>
+                <artifactId>commons-codec</artifactId>
+                <version>1.9</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-beanutils</groupId>
+                <artifactId>commons-beanutils</artifactId>
+                <version>1.9.4</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>1.22</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.luben</groupId>
+                <artifactId>zstd-jni</artifactId>
+                <version>1.5.2-5</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.httpcomponents</groupId>
+                <artifactId>httpclient</artifactId>
+                <version>4.5.13</version>
+            </dependency>
+            <dependency>
                 <groupId>org.apache.zookeeper</groupId>
                 <artifactId>zookeeper</artifactId>
-                <version>3.4.5</version>
+                <version>3.5.6</version>
                 <exclusions>
                     <exclusion>
                         <groupId>log4j</groupId>
@@ -167,22 +236,30 @@
                         <groupId>jline</groupId>
                         <artifactId>jline</artifactId>
                     </exclusion>
+                    <exclusion>
+                        <groupId>io.netty</groupId>
+                        <artifactId>netty-handler</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>io.netty</groupId>
+                        <artifactId>netty-transport-native-epoll</artifactId>
+                    </exclusion>
                 </exclusions>
             </dependency>
             <dependency>
-                <groupId>com.github.sgroschupf</groupId>
+                <groupId>com.101tec</groupId>
                 <artifactId>zkclient</artifactId>
-                <version>0.1</version>
+                <version>0.10</version>
             </dependency>
             <dependency>
-                <groupId>com.alibaba</groupId>
-                <artifactId>fastjson</artifactId>
-                <version>1.1.35</version>
+                <groupId>com.alibaba.fastjson2</groupId>
+                <artifactId>fastjson2</artifactId>
+                <version>2.0.31</version>
             </dependency>
             <dependency>
                 <groupId>com.google.guava</groupId>
                 <artifactId>guava</artifactId>
-                <version>18.0</version>
+                <version>22.0</version>
             </dependency>
             <dependency>
                 <groupId>com.googlecode.aviator</groupId>
@@ -195,25 +272,50 @@
                 <version>2.0.8</version>
             </dependency>
             <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-all</artifactId>
+                <version>4.1.68.Final</version>
+            </dependency>
+            <dependency>
                 <groupId>org.jboss.netty</groupId>
                 <artifactId>netty</artifactId>
-                <version>3.2.5.Final</version>
+                <version>3.2.10.Final</version>
             </dependency>
             <dependency>
                 <groupId>com.google.protobuf</groupId>
                 <artifactId>protobuf-java</artifactId>
-                <version>2.4.1</version>
+                <version>3.6.1</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mybatis</groupId>
+                <artifactId>mybatis-spring</artifactId>
+                <version>2.0.4</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mybatis</groupId>
+                <artifactId>mybatis</artifactId>
+                <version>3.5.6</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba</groupId>
+                <artifactId>druid</artifactId>
+                <version>1.2.21</version>
+            </dependency>
+            <dependency>
+                <groupId>com.lmax</groupId>
+                <artifactId>disruptor</artifactId>
+                <version>3.4.2</version>
             </dependency>
             <!-- log -->
             <dependency>
                 <groupId>ch.qos.logback</groupId>
                 <artifactId>logback-core</artifactId>
-                <version>1.1.3</version>
+                <version>1.2.9</version>
             </dependency>
             <dependency>
                 <groupId>ch.qos.logback</groupId>
                 <artifactId>logback-classic</artifactId>
-                <version>1.1.3</version>
+                <version>1.2.9</version>
             </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>
@@ -225,6 +327,47 @@
                 <artifactId>slf4j-api</artifactId>
                 <version>1.7.12</version>
             </dependency>
+            <dependency>
+                <groupId>com.h2database</groupId>
+                <artifactId>h2</artifactId>
+                <version>2.2.224</version>
+            </dependency>
+            <dependency>
+                <groupId>mysql</groupId>
+                <artifactId>mysql-connector-java</artifactId>
+                <version>${mysql_driver_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.code.findbugs</groupId>
+                <artifactId>jsr305</artifactId>
+                <version>3.0.2</version>
+            </dependency>
+            <dependency>
+                <groupId>javax.annotation</groupId>
+                <artifactId>javax.annotation-api</artifactId>
+                <version>${javax.annotation-api.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-core</artifactId>
+                <version>${log4j_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-api</artifactId>
+                <version>${log4j_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-to-slf4j</artifactId>
+                <version>${log4j_version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.polardbx</groupId>
+                <artifactId>polardbx-parser</artifactId>
+                <version>5.4.19</version>
+            </dependency>
+
             <!-- test dependency -->
             <dependency>
                 <groupId>junit</groupId>
@@ -233,9 +376,27 @@
                 <scope>test</scope>
             </dependency>
             <dependency>
-                <groupId>mysql</groupId>
-                <artifactId>mysql-connector-java</artifactId>
-                <version>5.1.33</version>
+                <groupId>org.powermock</groupId>
+                <artifactId>powermock-api-mockito</artifactId>
+                <version>1.6.5</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.powermock</groupId>
+                <artifactId>powermock-module-junit4</artifactId>
+                <version>1.6.5</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-all</artifactId>
+                <version>1.10.19</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.diffblue</groupId>
+                <artifactId>deeptestutils</artifactId>
+                <version>1.9.0</version>
                 <scope>test</scope>
             </dependency>
         </dependencies>
@@ -271,7 +432,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.2</version>
+                <version>${maven-compiler-plugin.version}</version>
                 <configuration>
                     <source>${java_source_version}</source>
                     <target>${java_target_version}</target>
@@ -279,126 +440,103 @@
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-eclipse-plugin</artifactId>
-                <version>2.5.1</version>
-                <configuration>
-                    <additionalConfig>
-                        <file>
-                            <name>.settings/org.eclipse.core.resources.prefs</name>
-                            <content>
-                                <![CDATA[eclipse.preferences.version=1${line.separator}encoding/<project>=${file_encoding}${line.separator}]]>
-                            </content>
-                        </file>
-                    </additionalConfig>
-                </configuration>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${maven-jacoco-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>jacoco-initialize</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                        <configuration>
+                            <propertyName>jacocoArgLine</propertyName>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>report-aggregate</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report-aggregate</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>2.5</version>
+                <version>${maven-surefire.version}</version>
                 <configuration>
-                    <includes>
-                        <include>**/*Test.java</include>
-                    </includes>
-                    <excludes>
-                        <exclude>**/*NoRunTest.java</exclude>
-                    </excludes>
+                    <useSystemClassLoader>true</useSystemClassLoader>
+                    <forkMode>once</forkMode>
+                    <argLine>${argline} ${jacocoArgLine}</argLine>
+                    <systemProperties>
+                        <!-- common shared -->
+                    </systemProperties>
+                	<parallel>classes</parallel>
+                	<useUnlimitedThreads>true</useUnlimitedThreads>
+                	<disableXmlReport>${closeTestReports}</disableXmlReport>
+
                 </configuration>
             </plugin>
             <!-- javadoc -->
-            <!--
             <plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-javadoc-plugin</artifactId>
-				<version>2.7</version>
-				<executions>
-					<execution>
-						<id>attach-javadocs</id>
-							<goals>
-								<goal>jar</goal>
-							</goals>
-						</execution>
-					</executions>
-				<configuration>
-				  <encoding>${file_encoding}</encoding>
-				  <charset>${file_encoding}</charset>
-				  <doclet>org.jboss.apiviz.APIviz</doclet>
-				  <docletArtifact>
-					<groupId>org.jboss.apiviz</groupId>
-					<artifactId>apiviz</artifactId>
-					<version>1.3.0.GA</version>
-				  </docletArtifact>
-				  <useStandardDocletOptions>true</useStandardDocletOptions>
-				  <breakiterator>true</breakiterator>
-				  <version>true</version>
-				  <author>true</author>
-				  <keywords>true</keywords>
-				</configuration>
-			</plugin>
-			
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jxr-plugin</artifactId>
-				<version>2.2</version>
-				<configuration>
-					<aggregate>true</aggregate>
-					<destDir>${project.basedir}/docs/sources</destDir>
-					<linkJavadoc>true</linkJavadoc>
-					<javadocDir>${project.basedir}/docs/javadoc</javadocDir>
-				</configuration>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-source-plugin</artifactId>
-				<version>2.1.2</version>
-				<executions>
-					<execution>
-					<id>attach-sources</id>
-						<goals>
-							<goal>jar</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-			-->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>2.9.1</version>
+                <executions>
+                    <execution>
+                            <id>attach-javadocs</id>
+                            <goals>
+                                <goal>jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                <configuration>
+                  <skip>${javadoc_skip}</skip>
+                  <!-- workaround for https://bugs.openjdk.java.net/browse/JDK-8212233 -->
+                  <javaApiLinks>
+                     <property>
+                         <name>foo</name>
+                         <value>bar</value>
+                     </property>
+                  </javaApiLinks>
+                  <encoding>${file_encoding}</encoding>
+                  <charset>${file_encoding}</charset>
+                  <additionalparam>-Xdoclint:none</additionalparam>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.2.8</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>sign</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.8.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                </configuration>
+            </plugin>
         </plugins>
-        <sourceDirectory>src/main/java</sourceDirectory>
-        <testSourceDirectory>src/test/java</testSourceDirectory>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-                <includes>
-                    <include>**/*</include>
-                </includes>
-                <excludes>
-                    <exclude>**/.svn/</exclude>
-                </excludes>
-            </resource>
-        </resources>
-        <testResources>
-            <testResource>
-                <directory>src/test/resources</directory>
-                <includes>
-                    <include>**/*</include>
-                </includes>
-                <excludes>
-                    <exclude>**/.svn/</exclude>
-                </excludes>
-            </testResource>
-        </testResources>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.0.2</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
-
-    <distributionManagement>
-        <snapshotRepository>
-            <id>sonatype-nexus-snapshots</id>
-            <name>Sonatype Nexus Snapshots</name>
-            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
-        </snapshotRepository>
-        <repository>
-            <id>sonatype-nexus-staging</id>
-            <name>Nexus Release Repository</name>
-            <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-        </repository>
-    </distributionManagement>
 </project>

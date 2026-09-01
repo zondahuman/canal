@@ -1,6 +1,7 @@
 package com.taobao.tddl.dbsync.binlog.event;
 
 import java.io.Serializable;
+import java.nio.charset.Charset;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.BitSet;
@@ -10,83 +11,110 @@ import org.apache.commons.logging.LogFactory;
 
 import com.taobao.tddl.dbsync.binlog.JsonConversion;
 import com.taobao.tddl.dbsync.binlog.JsonConversion.Json_Value;
+import com.taobao.tddl.dbsync.binlog.JsonDiffConversion;
 import com.taobao.tddl.dbsync.binlog.LogBuffer;
 import com.taobao.tddl.dbsync.binlog.LogEvent;
 
 /**
  * Extracting JDBC type & value information from packed rows-buffer.
- * 
+ *
  * @see mysql-5.1.60/sql/log_event.cc - Rows_log_event::print_verbose_one_row
  * @author <a href="mailto:changyuan.lh@taobao.com">Changyuan.lh</a>
  * @version 1.0
  */
 public final class RowsLogBuffer {
 
-    protected static final Log logger            = LogFactory.getLog(RowsLogBuffer.class);
+    protected static final Log    logger            = LogFactory.getLog(RowsLogBuffer.class);
+    public static final Long[]    longCache         = new Long[1024 * 128];
+    public static final int       longCacheLimit    = longCache.length + 127;
+    public static final Integer[] integerCache      = new Integer[1024 * 128];
+    public static final int       integerCacheLimit = longCache.length + 127;
 
-    public static final long   DATETIMEF_INT_OFS = 0x8000000000L;
-    public static final long   TIMEF_INT_OFS     = 0x800000L;
-    public static final long   TIMEF_OFS         = 0x800000000000L;
+    public static final long      DATETIMEF_INT_OFS = 0x8000000000L;
+    public static final long      TIMEF_INT_OFS     = 0x800000L;
+    public static final long      TIMEF_OFS         = 0x800000000000L;
+    private static char[]         digits            = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
 
-    private final LogBuffer    buffer;
-    private final int          columnLen;
-    private final String       charsetName;
-    // private Calendar cal;
+    private final LogBuffer       buffer;
+    private final int             columnLen;
+    private final int             jsonColumnCount;
+    private final Charset         charset;
 
-    private final BitSet       nullBits;
-    private int                nullBitIndex;
+    private final BitSet          nullBits;
+    private int                   nullBitIndex;
 
-    private boolean            fNull;
-    private int                javaType;
-    private int                length;
-    private Serializable       value;
+    // Read value_options if this is AI for PARTIAL_UPDATE_ROWS_EVENT
+    private final boolean         partial;
+    private final BitSet          partialBits;
 
-    public RowsLogBuffer(LogBuffer buffer, final int columnLen, String charsetName){
+    private boolean               fNull;
+    private int                   javaType;
+    private int                   length;
+    private Serializable          value;
+
+    public RowsLogBuffer(LogBuffer buffer, final int columnLen, Charset charset, int jsonColumnCount, boolean partial){
         this.buffer = buffer;
         this.columnLen = columnLen;
-        this.charsetName = charsetName;
+        this.charset = charset;
+        this.partial = partial;
+        this.jsonColumnCount = jsonColumnCount;
         this.nullBits = new BitSet(columnLen);
+        this.partialBits = new BitSet(1);
+    }
+
+    public final boolean nextOneRow(BitSet columns) {
+        return nextOneRow(columns, false);
     }
 
     /**
      * Extracting next row from packed buffer.
-     * 
-     * @see mysql-5.1.60/sql/log_event.cc -
-     * Rows_log_event::print_verbose_one_row
+     *
+     * @see mysql-5.1.60/sql/log_event.cc - Rows_log_event::print_verbose_one_row
      */
-    public final boolean nextOneRow(BitSet columns) {
+    public final boolean nextOneRow(BitSet columns, boolean after) {
         final boolean hasOneRow = buffer.hasRemaining();
 
         if (hasOneRow) {
             int column = 0;
 
             for (int i = 0; i < columnLen; i++)
-                if (columns.get(i)) column++;
+                if (columns.get(i)) {
+                    column++;
+                }
 
+            if (after && partial) {
+                partialBits.clear();
+                long valueOptions = buffer.getPackedLong();
+                int PARTIAL_JSON_UPDATES = 1;
+                if ((valueOptions & PARTIAL_JSON_UPDATES) != 0) {
+                    partialBits.set(1);
+                    buffer.forward((jsonColumnCount + 7) / 8);
+                }
+            }
             nullBitIndex = 0;
             nullBits.clear();
             buffer.fillBitmap(nullBits, column);
+
         }
         return hasOneRow;
     }
 
     /**
      * Extracting next field value from packed buffer.
-     * 
-     * @see mysql-5.1.60/sql/log_event.cc -
-     * Rows_log_event::print_verbose_one_row
+     *
+     * @see mysql-5.1.60/sql/log_event.cc - Rows_log_event::print_verbose_one_row
      */
-    public final Serializable nextValue(final int type, final int meta) {
-        return nextValue(type, meta, false);
+    public final Serializable nextValue(final String columName, final int columnIndex, final int type, final int meta) {
+        return nextValue(columName, columnIndex, type, meta, false);
     }
 
     /**
      * Extracting next field value from packed buffer.
-     * 
-     * @see mysql-5.1.60/sql/log_event.cc -
-     * Rows_log_event::print_verbose_one_row
+     *
+     * @see mysql-5.1.60/sql/log_event.cc - Rows_log_event::print_verbose_one_row
      */
-    public final Serializable nextValue(final int type, final int meta, boolean isBinary) {
+    public final Serializable nextValue(final String columName, final int columnIndex, final int type, final int meta,
+                                        boolean isBinary) {
         fNull = nullBits.get(nullBitIndex++);
 
         if (fNull) {
@@ -96,7 +124,7 @@ public final class RowsLogBuffer {
             return null;
         } else {
             // Extracting field value from packed buffer.
-            return fetchValue(type, meta, isBinary);
+            return fetchValue(columName, columnIndex, type, meta, isBinary);
         }
     }
 
@@ -244,10 +272,10 @@ public final class RowsLogBuffer {
 
     /**
      * Extracting next field value from packed buffer.
-     * 
+     *
      * @see mysql-5.1.60/sql/log_event.cc - log_event_print_value
      */
-    final Serializable fetchValue(int type, final int meta, boolean isBinary) {
+    final Serializable fetchValue(String columnName, int columnIndex, int type, final int meta, boolean isBinary) {
         int len = 0;
 
         if (type == LogEvent.MYSQL_TYPE_STRING) {
@@ -267,10 +295,8 @@ public final class RowsLogBuffer {
                             len = byte1;
                             break;
                         default:
-                            throw new IllegalArgumentException(String.format("!! Don't know how to handle column type=%d meta=%d (%04X)",
-                                type,
-                                meta,
-                                meta));
+                            throw new IllegalArgumentException(String
+                                .format("!! Don't know how to handle column type=%d meta=%d (%04X)", type, meta, meta));
                     }
                 }
             } else {
@@ -283,7 +309,7 @@ public final class RowsLogBuffer {
                 // XXX: How to check signed / unsigned?
                 // value = unsigned ? Long.valueOf(buffer.getUint32()) :
                 // Integer.valueOf(buffer.getInt32());
-                value = Integer.valueOf(buffer.getInt32());
+                value = valueOf(buffer.getInt32());
                 javaType = Types.INTEGER;
                 length = 4;
                 break;
@@ -292,7 +318,7 @@ public final class RowsLogBuffer {
                 // XXX: How to check signed / unsigned?
                 // value = Integer.valueOf(unsigned ? buffer.getUint8() :
                 // buffer.getInt8());
-                value = Integer.valueOf(buffer.getInt8());
+                value = valueOf(buffer.getInt8());
                 javaType = Types.TINYINT; // java.sql.Types.INTEGER;
                 length = 1;
                 break;
@@ -301,7 +327,7 @@ public final class RowsLogBuffer {
                 // XXX: How to check signed / unsigned?
                 // value = Integer.valueOf(unsigned ? buffer.getUint16() :
                 // buffer.getInt16());
-                value = Integer.valueOf((short) buffer.getInt16());
+                value = valueOf((short) buffer.getInt16());
                 javaType = Types.SMALLINT; // java.sql.Types.INTEGER;
                 length = 2;
                 break;
@@ -310,7 +336,7 @@ public final class RowsLogBuffer {
                 // XXX: How to check signed / unsigned?
                 // value = Integer.valueOf(unsigned ? buffer.getUint24() :
                 // buffer.getInt24());
-                value = Integer.valueOf(buffer.getInt24());
+                value = valueOf(buffer.getInt24());
                 javaType = Types.INTEGER;
                 length = 3;
                 break;
@@ -319,15 +345,15 @@ public final class RowsLogBuffer {
                 // XXX: How to check signed / unsigned?
                 // value = unsigned ? buffer.getUlong64()) :
                 // Long.valueOf(buffer.getLong64());
-                value = Long.valueOf(buffer.getLong64());
+                value = valueOf(buffer.getLong64());
                 javaType = Types.BIGINT; // Types.INTEGER;
                 length = 8;
                 break;
             }
             case LogEvent.MYSQL_TYPE_DECIMAL: {
                 /*
-                 * log_event.h : This enumeration value is only used internally
-                 * and cannot exist in a binlog.
+                 * log_event.h : This enumeration value is only used internally and cannot exist
+                 * in a binlog.
                  */
                 logger.warn("MYSQL_TYPE_DECIMAL : This enumeration value is "
                             + "only used internally and cannot exist in a binlog!");
@@ -366,7 +392,7 @@ public final class RowsLogBuffer {
                     // 转化为unsign long
                     switch (len) {
                         case 1:
-                            value = buffer.getInt8();
+                            value = buffer.getUint8();
                             break;
                         case 2:
                             value = buffer.getBeUint16();
@@ -480,13 +506,27 @@ public final class RowsLogBuffer {
                     // cal.set(d / 10000, (d % 10000) / 100 - 1, d % 100, t /
                     // 10000, (t % 10000) / 100, t % 100);
                     // value = new Timestamp(cal.getTimeInMillis());
-                    value = String.format("%04d-%02d-%02d %02d:%02d:%02d",
-                        d / 10000,
-                        (d % 10000) / 100,
-                        d % 100,
-                        t / 10000,
-                        (t % 10000) / 100,
-                        t % 100);
+                    // value = String.format("%04d-%02d-%02d %02d:%02d:%02d",
+                    // d / 10000,
+                    // (d % 10000) / 100,
+                    // d % 100,
+                    // t / 10000,
+                    // (t % 10000) / 100,
+                    // t % 100);
+
+                    StringBuilder builder = new StringBuilder();
+                    appendNumber4(builder, d / 10000);
+                    builder.append('-');
+                    appendNumber2(builder, (d % 10000) / 100);
+                    builder.append('-');
+                    appendNumber2(builder, d % 100);
+                    builder.append(' ');
+                    appendNumber2(builder, t / 10000);
+                    builder.append(':');
+                    appendNumber2(builder, (t % 10000) / 100);
+                    builder.append(':');
+                    appendNumber2(builder, t % 100);
+                    value = builder.toString();
                 }
                 javaType = Types.TIMESTAMP;
                 length = 8;
@@ -494,12 +534,10 @@ public final class RowsLogBuffer {
             }
             case LogEvent.MYSQL_TYPE_DATETIME2: {
                 /*
-                 * DATETIME and DATE low-level memory and disk representation
-                 * routines 1 bit sign (used when on disk) 17 bits year*13+month
-                 * (year 0-9999, month 0-12) 5 bits day (0-31) 5 bits hour
-                 * (0-23) 6 bits minute (0-59) 6 bits second (0-59) 24 bits
-                 * microseconds (0-999999) Total: 64 bits = 8 bytes
-                 * SYYYYYYY.YYYYYYYY
+                 * DATETIME and DATE low-level memory and disk representation routines 1 bit
+                 * sign (used when on disk) 17 bits year*13+month (year 0-9999, month 0-12) 5
+                 * bits day (0-31) 5 bits hour (0-23) 6 bits minute (0-59) 6 bits second (0-59)
+                 * 24 bits microseconds (0-999999) Total: 64 bits = 8 bytes SYYYYYYY.YYYYYYYY
                  * .YYdddddh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
                  */
                 long intpart = buffer.getBeUlong40() - DATETIMEF_INT_OFS; // big-endian
@@ -540,13 +578,27 @@ public final class RowsLogBuffer {
                     // % (1 << 5)), (int) (hms >> 12),
                     // (int) ((hms >> 6) % (1 << 6)), (int) (hms % (1 << 6)));
                     // value = new Timestamp(cal.getTimeInMillis());
-                    second = String.format("%04d-%02d-%02d %02d:%02d:%02d",
-                        (int) (ym / 13),
-                        (int) (ym % 13),
-                        (int) (ymd % (1 << 5)),
-                        (int) (hms >> 12),
-                        (int) ((hms >> 6) % (1 << 6)),
-                        (int) (hms % (1 << 6)));
+                    // second = String.format("%04d-%02d-%02d %02d:%02d:%02d",
+                    // (int) (ym / 13),
+                    // (int) (ym % 13),
+                    // (int) (ymd % (1 << 5)),
+                    // (int) (hms >> 12),
+                    // (int) ((hms >> 6) % (1 << 6)),
+                    // (int) (hms % (1 << 6)));
+
+                    StringBuilder builder = new StringBuilder(26);
+                    appendNumber4(builder, (int) (ym / 13));
+                    builder.append('-');
+                    appendNumber2(builder, (int) (ym % 13));
+                    builder.append('-');
+                    appendNumber2(builder, (int) (ymd % (1 << 5)));
+                    builder.append(' ');
+                    appendNumber2(builder, (int) (hms >> 12));
+                    builder.append(':');
+                    appendNumber2(builder, (int) ((hms >> 6) % (1 << 6)));
+                    builder.append(':');
+                    appendNumber2(builder, (int) (hms % (1 << 6)));
+                    second = builder.toString();
                 }
 
                 if (meta >= 1) {
@@ -575,11 +627,28 @@ public final class RowsLogBuffer {
                     // cal.set(70, 0, 1, i32 / 10000, (i32 % 10000) / 100, i32 %
                     // 100);
                     // value = new Time(cal.getTimeInMillis());
-                    value = String.format("%s%02d:%02d:%02d",
-                        (i32 >= 0) ? "" : "-",
-                        u32 / 10000,
-                        (u32 % 10000) / 100,
-                        u32 % 100);
+                    // value = String.format("%s%02d:%02d:%02d",
+                    // (i32 >= 0) ? "" : "-",
+                    // u32 / 10000,
+                    // (u32 % 10000) / 100,
+                    // u32 % 100);
+
+                    StringBuilder builder = new StringBuilder(17);
+                    if (i32 < 0) {
+                        builder.append('-');
+                    }
+
+                    int d = u32 / 10000;
+                    if (d > 100) {
+                        builder.append(String.valueOf(d));
+                    } else {
+                        appendNumber2(builder, d);
+                    }
+                    builder.append(':');
+                    appendNumber2(builder, (u32 % 10000) / 100);
+                    builder.append(':');
+                    appendNumber2(builder, u32 % 100);
+                    value = builder.toString();
                 }
                 javaType = Types.TIME;
                 length = 3;
@@ -587,12 +656,10 @@ public final class RowsLogBuffer {
             }
             case LogEvent.MYSQL_TYPE_TIME2: {
                 /*
-                 * TIME low-level memory and disk representation routines
-                 * In-memory format: 1 bit sign (Used for sign, when on disk) 1
-                 * bit unused (Reserved for wider hour range, e.g. for
-                 * intervals) 10 bit hour (0-836) 6 bit minute (0-59) 6 bit
-                 * second (0-59) 24 bits microseconds (0-999999) Total: 48 bits
-                 * = 6 bytes
+                 * TIME low-level memory and disk representation routines In-memory format: 1
+                 * bit sign (Used for sign, when on disk) 1 bit unused (Reserved for wider hour
+                 * range, e.g. for intervals) 10 bit hour (0-836) 6 bit minute (0-59) 6 bit
+                 * second (0-59) 24 bits microseconds (0-999999) Total: 48 bits = 6 bytes
                  * Suhhhhhh.hhhhmmmm.mmssssss.ffffffff.ffffffff.ffffffff
                  */
                 long intpart = 0;
@@ -609,20 +676,15 @@ public final class RowsLogBuffer {
                         frac = buffer.getUint8();
                         if (intpart < 0 && frac > 0) {
                             /*
-                             * Negative values are stored with reverse
-                             * fractional part order, for binary sort
-                             * compatibility. Disk value intpart frac Time value
-                             * Memory value 800000.00 0 0 00:00:00.00
-                             * 0000000000.000000 7FFFFF.FF -1 255 -00:00:00.01
-                             * FFFFFFFFFF.FFD8F0 7FFFFF.9D -1 99 -00:00:00.99
-                             * FFFFFFFFFF.F0E4D0 7FFFFF.00 -1 0 -00:00:01.00
-                             * FFFFFFFFFF.000000 7FFFFE.FF -1 255 -00:00:01.01
-                             * FFFFFFFFFE.FFD8F0 7FFFFE.F6 -2 246 -00:00:01.10
-                             * FFFFFFFFFE.FE7960 Formula to convert fractional
-                             * part from disk format (now stored in "frac"
-                             * variable) to absolute value: "0x100 - frac". To
-                             * reconstruct in-memory value, we shift to the next
-                             * integer value and then substruct fractional part.
+                             * Negative values are stored with reverse fractional part order, for binary
+                             * sort compatibility. Disk value intpart frac Time value Memory value 800000.00
+                             * 0 0 00:00:00.00 0000000000.000000 7FFFFF.FF -1 255 -00:00:00.01
+                             * FFFFFFFFFF.FFD8F0 7FFFFF.9D -1 99 -00:00:00.99 FFFFFFFFFF.F0E4D0 7FFFFF.00 -1
+                             * 0 -00:00:01.00 FFFFFFFFFF.000000 7FFFFE.FF -1 255 -00:00:01.01
+                             * FFFFFFFFFE.FFD8F0 7FFFFE.F6 -2 246 -00:00:01.10 FFFFFFFFFE.FE7960 Formula to
+                             * convert fractional part from disk format (now stored in "frac" variable) to
+                             * absolute value: "0x100 - frac". To reconstruct in-memory value, we shift to
+                             * the next integer value and then substruct fractional part.
                              */
                             intpart++; /* Shift to the next integer value */
                             frac -= 0x100; /* -(0x100 - frac) */
@@ -637,9 +699,8 @@ public final class RowsLogBuffer {
                         frac = buffer.getBeUint16();
                         if (intpart < 0 && frac > 0) {
                             /*
-                             * Fix reverse fractional part order:
-                             * "0x10000 - frac". See comments for FSP=1 and
-                             * FSP=2 above.
+                             * Fix reverse fractional part order: "0x10000 - frac". See comments for FSP=1
+                             * and FSP=2 above.
                              */
                             intpart++; /* Shift to the next integer value */
                             frac -= 0x10000; /* -(0x10000-frac) */
@@ -662,7 +723,7 @@ public final class RowsLogBuffer {
 
                 String second = null;
                 if (intpart == 0) {
-                    second = "00:00:00";
+                    second = frac < 0 ? "-00:00:00" : "00:00:00";
                 } else {
                     // 目前只记录秒，不处理us frac
                     // if (cal == null) cal = Calendar.getInstance();
@@ -673,11 +734,28 @@ public final class RowsLogBuffer {
                     // value = new Time(cal.getTimeInMillis());
                     long ultime = Math.abs(ltime);
                     intpart = ultime >> 24;
-                    second = String.format("%s%02d:%02d:%02d",
-                        ltime >= 0 ? "" : "-",
-                        (int) ((intpart >> 12) % (1 << 10)),
-                        (int) ((intpart >> 6) % (1 << 6)),
-                        (int) (intpart % (1 << 6)));
+                    // second = String.format("%s%02d:%02d:%02d",
+                    // ltime >= 0 ? "" : "-",
+                    // (int) ((intpart >> 12) % (1 << 10)),
+                    // (int) ((intpart >> 6) % (1 << 6)),
+                    // (int) (intpart % (1 << 6)));
+
+                    StringBuilder builder = new StringBuilder(12);
+                    if (ltime < 0) {
+                        builder.append('-');
+                    }
+
+                    int d = (int) ((intpart >> 12) % (1 << 10));
+                    if (d >= 100) {
+                        builder.append(String.valueOf(d));
+                    } else {
+                        appendNumber2(builder, d);
+                    }
+                    builder.append(':');
+                    appendNumber2(builder, (int) ((intpart >> 6) % (1 << 6)));
+                    builder.append(':');
+                    appendNumber2(builder, (int) (intpart % (1 << 6)));
+                    second = builder.toString();
                 }
 
                 if (meta >= 1) {
@@ -694,8 +772,8 @@ public final class RowsLogBuffer {
             }
             case LogEvent.MYSQL_TYPE_NEWDATE: {
                 /*
-                 * log_event.h : This enumeration value is only used internally
-                 * and cannot exist in a binlog.
+                 * log_event.h : This enumeration value is only used internally and cannot exist
+                 * in a binlog.
                  */
                 logger.warn("MYSQL_TYPE_NEWDATE : This enumeration value is "
                             + "only used internally and cannot exist in a binlog!");
@@ -717,7 +795,16 @@ public final class RowsLogBuffer {
                     // cal.set((i32 / (16 * 32)), (i32 / 32 % 16) - 1, (i32 %
                     // 32));
                     // value = new java.sql.Date(cal.getTimeInMillis());
-                    value = String.format("%04d-%02d-%02d", i32 / (16 * 32), i32 / 32 % 16, i32 % 32);
+                    // value = String.format("%04d-%02d-%02d", i32 / (16 * 32),
+                    // i32 / 32 % 16, i32 % 32);
+
+                    StringBuilder builder = new StringBuilder(12);
+                    appendNumber4(builder, i32 / (16 * 32));
+                    builder.append('-');
+                    appendNumber2(builder, i32 / 32 % 16);
+                    builder.append('-');
+                    appendNumber2(builder, i32 % 32);
+                    value = builder.toString();
                 }
                 javaType = Types.DATE;
                 length = 3;
@@ -758,8 +845,8 @@ public final class RowsLogBuffer {
             case LogEvent.MYSQL_TYPE_ENUM: {
                 final int int32;
                 /*
-                 * log_event.h : This enumeration value is only used internally
-                 * and cannot exist in a binlog.
+                 * log_event.h : This enumeration value is only used internally and cannot exist
+                 * in a binlog.
                  */
                 switch (len) {
                     case 1:
@@ -773,7 +860,7 @@ public final class RowsLogBuffer {
                 }
                 // logger.warn("MYSQL_TYPE_ENUM : This enumeration value is "
                 // + "only used internally and cannot exist in a binlog!");
-                value = Integer.valueOf(int32);
+                value = valueOf(int32);
                 javaType = Types.INTEGER;
                 length = len;
                 break;
@@ -787,7 +874,7 @@ public final class RowsLogBuffer {
                     // 转化为unsign long
                     switch (len) {
                         case 1:
-                            value = buffer.getInt8();
+                            value = buffer.getUint8();
                             break;
                         case 2:
                             value = buffer.getUint16();
@@ -825,24 +912,24 @@ public final class RowsLogBuffer {
             }
             case LogEvent.MYSQL_TYPE_TINY_BLOB: {
                 /*
-                 * log_event.h : This enumeration value is only used internally
-                 * and cannot exist in a binlog.
+                 * log_event.h : This enumeration value is only used internally and cannot exist
+                 * in a binlog.
                  */
                 logger.warn("MYSQL_TYPE_TINY_BLOB : This enumeration value is "
                             + "only used internally and cannot exist in a binlog!");
             }
             case LogEvent.MYSQL_TYPE_MEDIUM_BLOB: {
                 /*
-                 * log_event.h : This enumeration value is only used internally
-                 * and cannot exist in a binlog.
+                 * log_event.h : This enumeration value is only used internally and cannot exist
+                 * in a binlog.
                  */
                 logger.warn("MYSQL_TYPE_MEDIUM_BLOB : This enumeration value is "
                             + "only used internally and cannot exist in a binlog!");
             }
             case LogEvent.MYSQL_TYPE_LONG_BLOB: {
                 /*
-                 * log_event.h : This enumeration value is only used internally
-                 * and cannot exist in a binlog.
+                 * log_event.h : This enumeration value is only used internally and cannot exist
+                 * in a binlog.
                  */
                 logger.warn("MYSQL_TYPE_LONG_BLOB : This enumeration value is "
                             + "only used internally and cannot exist in a binlog!");
@@ -901,8 +988,7 @@ public final class RowsLogBuffer {
             case LogEvent.MYSQL_TYPE_VAR_STRING: {
                 /*
                  * Except for the data length calculation, MYSQL_TYPE_VARCHAR,
-                 * MYSQL_TYPE_VAR_STRING and MYSQL_TYPE_STRING are handled the
-                 * same way.
+                 * MYSQL_TYPE_VAR_STRING and MYSQL_TYPE_STRING are handled the same way.
                  */
                 len = meta;
                 if (len < 256) {
@@ -920,7 +1006,7 @@ public final class RowsLogBuffer {
                     javaType = Types.VARBINARY;
                     value = binary;
                 } else {
-                    value = buffer.getFullString(len, charsetName);
+                    value = buffer.getFullString(len, charset);
                     javaType = Types.VARCHAR;
                 }
 
@@ -942,26 +1028,52 @@ public final class RowsLogBuffer {
                     javaType = Types.BINARY;
                     value = binary;
                 } else {
-                    value = buffer.getFullString(len, charsetName);
+                    value = buffer.getFullString(len, charset);
                     javaType = Types.CHAR; // Types.VARCHAR;
                 }
                 length = len;
                 break;
             }
             case LogEvent.MYSQL_TYPE_JSON: {
-                len = buffer.getUint16();
-                buffer.forward(meta - 2);
-                int position = buffer.position();
-                Json_Value jsonValue = JsonConversion.parse_value(buffer.getUint8(), buffer, len - 1);
-                StringBuilder builder = new StringBuilder();
-                jsonValue.toJsonString(builder);
-                value = builder.toString();
-                buffer.position(position + len);
+                switch (meta) {
+                    case 1: {
+                        len = buffer.getUint8();
+                        break;
+                    }
+                    case 2: {
+                        len = buffer.getUint16();
+                        break;
+                    }
+                    case 3: {
+                        len = buffer.getUint24();
+                        break;
+                    }
+                    case 4: {
+                        len = (int) buffer.getUint32();
+                        break;
+                    }
+                    default:
+                        throw new IllegalArgumentException("!! Unknown JSON packlen = " + meta);
+                }
 
-                // byte[] binary = new byte[len];
-                // buffer.fillBytes(binary, 0, len);
-                // value = binary;
-                javaType = Types.VARBINARY;
+                if (partialBits.get(1)) {
+                    // print_json_diff
+                    int position = buffer.position();
+                    try {
+                        // https://github.com/alibaba/canal/pull/5018
+                        StringBuilder builder = JsonDiffConversion
+                            .print_json_diff(buffer, len, columnName, columnIndex, charset);
+                        value = builder.toString();
+                        buffer.position(position + len);
+                    } catch (IllegalArgumentException e) {
+                        buffer.position(position);
+                        // print_json_diff failed, fallback to parse_value
+                        parseJsonFromFullValue(len);
+                    }
+                } else {
+                    parseJsonFromFullValue(len);
+                }
+                javaType = Types.VARCHAR;
                 length = len;
                 break;
             }
@@ -988,28 +1100,40 @@ public final class RowsLogBuffer {
                 /* fill binary */
                 byte[] binary = new byte[len];
                 buffer.fillBytes(binary, 0, len);
-
-                /* Warning unsupport cloumn type */
-                logger.warn(String.format("!! Unsupport column type MYSQL_TYPE_GEOMETRY: meta=%d (%04X), len = %d",
-                    meta,
-                    meta,
-                    len));
+                // Warning unsupport cloumn type
+                // logger.warn(String.format("!! Unsupport column type MYSQL_TYPE_GEOMETRY:
+                // meta=%d (%04X), len = %d", meta,meta, len));
                 javaType = Types.BINARY;
                 value = binary;
                 length = len;
                 break;
             }
+            case LogEvent.MYSQL_TYPE_BOOL:
+            case LogEvent.MYSQL_TYPE_INVALID:
             default:
-                logger.error(String.format("!! Don't know how to handle column type=%d meta=%d (%04X)",
-                    type,
-                    meta,
-                    meta));
+                logger.error(
+                    String.format("!! Don't know how to handle column type=%d meta=%d (%04X)", type, meta, meta));
                 javaType = Types.OTHER;
                 value = null;
                 length = 0;
         }
 
         return value;
+    }
+
+    private void parseJsonFromFullValue(int len) {
+        if (0 == len) {
+            // fixed issue #1 by lava, json column of zero length has no value, value
+            // parsing should be skipped
+            value = "";
+        } else {
+            int position = buffer.position();
+            Json_Value jsonValue = JsonConversion.parse_value(buffer.getUint8(), buffer, len - 1, charset);
+            StringBuilder builder = new StringBuilder();
+            jsonValue.toJsonString(builder, charset);
+            value = builder.toString();
+            buffer.position(position + len);
+        }
     }
 
     public final boolean isNull() {
@@ -1028,7 +1152,7 @@ public final class RowsLogBuffer {
         return length;
     }
 
-    private String usecondsToStr(int frac, int meta) {
+    public static String usecondsToStr(int frac, int meta) {
         String sec = String.valueOf(frac);
         if (meta > 6) {
             throw new IllegalArgumentException("unknow useconds meta : " + meta);
@@ -1047,4 +1171,66 @@ public final class RowsLogBuffer {
         return sec.substring(0, meta);
     }
 
+    public static void appendNumber4(StringBuilder builder, int d) {
+        if (d >= 1000) {
+            builder.append(digits[d / 1000])
+                .append(digits[(d / 100) % 10])
+                .append(digits[(d / 10) % 10])
+                .append(digits[d % 10]);
+        } else {
+            builder.append('0');
+            appendNumber3(builder, d);
+        }
+    }
+
+    public static void appendNumber3(StringBuilder builder, int d) {
+        if (d >= 100) {
+            builder.append(digits[d / 100]).append(digits[(d / 10) % 10]).append(digits[d % 10]);
+        } else {
+            builder.append('0');
+            appendNumber2(builder, d);
+        }
+    }
+
+    public static void appendNumber2(StringBuilder builder, int d) {
+        if (d >= 10) {
+            builder.append(digits[(d / 10) % 10]).append(digits[d % 10]);
+        } else {
+            builder.append('0').append(digits[d]);
+        }
+    }
+
+    public static Long valueOf(long value) {
+        if (value >= -128 & value <= 127) {
+            // if (l >= -128 && l <= 127) {
+            return Long.valueOf(value);
+        }
+        if (value > 127 && value < longCacheLimit) {
+            int cacheIndex = (int) value - 127;
+            Long cacheValue = longCache[cacheIndex];
+            if (cacheValue == null) {
+                cacheValue = new Long(value);
+                longCache[cacheIndex] = cacheValue;
+            }
+            return cacheValue;
+        }
+        return new Long(value);
+    }
+
+    public static Integer valueOf(int value) {
+        if (value >= -128 & value <= 127) {
+            // if (l >= -128 && l <= 127) {
+            return Integer.valueOf(value);
+        }
+        if (value > 127 && value < integerCacheLimit) {
+            int cacheIndex = (int) value - 127;
+            Integer cacheValue = integerCache[cacheIndex];
+            if (cacheValue == null) {
+                cacheValue = new Integer(value);
+                integerCache[cacheIndex] = cacheValue;
+            }
+            return cacheValue;
+        }
+        return new Integer(value);
+    }
 }

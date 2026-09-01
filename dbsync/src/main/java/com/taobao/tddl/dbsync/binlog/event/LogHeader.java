@@ -1,5 +1,9 @@
 package com.taobao.tddl.dbsync.binlog.event;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import com.alibaba.otter.canal.parse.driver.mysql.packets.GTIDSet;
 import com.taobao.tddl.dbsync.binlog.LogBuffer;
 import com.taobao.tddl.dbsync.binlog.LogEvent;
 
@@ -62,7 +66,7 @@ import com.taobao.tddl.dbsync.binlog.LogEvent;
  */
 public final class LogHeader {
 
-    protected final int type;
+    protected int                 type;
 
     /**
      * The offset in the log where this event originally appeared (it is
@@ -114,6 +118,18 @@ public final class LogHeader {
      * Placeholder for event checksum while writing to binlog.
      */
     protected long      crc;        // ha_checksum
+
+    /**
+     * binlog fileName
+     */
+    protected String    logFileName;
+
+    protected Map<String, String> gtidMap = new HashMap<>();
+
+    private static final String CURRENT_GTID_STRING = "curt_gtid";
+    private static final String CURRENT_GTID_SN = "curt_gtid_sn";
+    private static final String CURRENT_GTID_LAST_COMMIT = "curt_gtid_lct";
+    private static final String GTID_SET_STRING = "gtid_str";
 
     /* for Start_event_v3 */
     public LogHeader(final int type){
@@ -270,9 +286,51 @@ public final class LogHeader {
         return checksumAlg;
     }
 
+    public String getLogFileName() {
+        return logFileName;
+    }
+
+    public void setLogFileName(String logFileName) {
+        this.logFileName = logFileName;
+    }
+    public void setLogPos(long logPos) {
+        this.logPos = logPos;
+    }
+    public void setEventLen(int eventLen) {
+        this.eventLen = eventLen;
+    }
+
     private void processCheckSum(LogBuffer buffer) {
         if (checksumAlg != LogEvent.BINLOG_CHECKSUM_ALG_OFF && checksumAlg != LogEvent.BINLOG_CHECKSUM_ALG_UNDEF) {
             crc = buffer.getUint32(eventLen - LogEvent.BINLOG_CHECKSUM_LEN);
+        }
+    }
+
+    public String getGtidSetStr() {
+        return gtidMap.get(GTID_SET_STRING);
+    }
+
+    public String getCurrentGtid() {
+        return gtidMap.get(CURRENT_GTID_STRING);
+    }
+
+    public String getCurrentGtidSn() {
+        return gtidMap.get(CURRENT_GTID_SN);
+    }
+
+    public String getCurrentGtidLastCommit() {
+        return gtidMap.get(CURRENT_GTID_LAST_COMMIT);
+    }
+
+    public void putGtid(GTIDSet gtidSet, LogEvent gtidEvent) {
+        if (gtidSet != null) {
+            gtidMap.put(GTID_SET_STRING, gtidSet.toString());
+            if (gtidEvent != null && gtidEvent instanceof GtidLogEvent) {
+                GtidLogEvent event = (GtidLogEvent) gtidEvent;
+                gtidMap.put(CURRENT_GTID_STRING, event.getGtidStr());
+                gtidMap.put(CURRENT_GTID_SN, String.valueOf(event.getSequenceNumber()));
+                gtidMap.put(CURRENT_GTID_LAST_COMMIT, String.valueOf(event.getLastCommitted()));
+            }
         }
     }
 }

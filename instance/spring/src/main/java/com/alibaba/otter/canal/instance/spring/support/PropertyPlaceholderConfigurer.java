@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import org.apache.commons.lang.StringUtils;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.context.ResourceLoaderAware;
 import org.springframework.core.io.Resource;
@@ -21,10 +22,12 @@ import org.springframework.util.Assert;
  */
 public class PropertyPlaceholderConfigurer extends org.springframework.beans.factory.config.PropertyPlaceholderConfigurer implements ResourceLoaderAware, InitializingBean {
 
-    private static final String PLACEHOLDER_PREFIX = "${";
-    private static final String PLACEHOLDER_SUFFIX = "}";
-    private ResourceLoader      loader;
-    private String[]            locationNames;
+    private static final String           PLACEHOLDER_PREFIX = "${";
+    private static final String           PLACEHOLDER_SUFFIX = "}";
+    public static ThreadLocal<Properties> propertiesLocal    = ThreadLocal.withInitial(Properties::new);
+
+    private ResourceLoader                loader;
+    private String[]                      locationNames;
 
     public PropertyPlaceholderConfigurer(){
         setIgnoreUnresolvablePlaceholders(true);
@@ -48,7 +51,7 @@ public class PropertyPlaceholderConfigurer extends org.springframework.beans.fac
         }
 
         if (locationNames != null) {
-            List<Resource> resources = new ArrayList<Resource>(locationNames.length);
+            List<Resource> resources = new ArrayList<>(locationNames.length);
 
             for (String location : locationNames) {
                 location = trimToNull(location);
@@ -117,13 +120,31 @@ public class PropertyPlaceholderConfigurer extends org.springframework.beans.fac
     @Override
     protected String resolvePlaceholder(String placeholder, Properties props, int systemPropertiesMode) {
         DefaultablePlaceholder dp = new DefaultablePlaceholder(placeholder);
-        String value = super.resolvePlaceholder(dp.placeholder, props, systemPropertiesMode);
-
-        if (value == null) {
-            value = dp.defaultValue;
+        String propVal = null;
+        // 以system为准覆盖本地配置, 适用于docker
+        if (systemPropertiesMode == SYSTEM_PROPERTIES_MODE_OVERRIDE) {
+            propVal = resolveSystemProperty(dp.placeholder);
         }
 
-        return trimToEmpty(value);
+        // 以threadlocal的为准覆盖file properties
+        if (StringUtils.isBlank(propVal)) {
+            Properties localProperties = propertiesLocal.get();
+            propVal = resolvePlaceholder(dp.placeholder, localProperties);
+        }
+
+        if (StringUtils.isBlank(propVal)) {
+            propVal = resolvePlaceholder(dp.placeholder, props);
+        }
+
+        if (StringUtils.isBlank(propVal) && systemPropertiesMode == SYSTEM_PROPERTIES_MODE_FALLBACK) {
+            propVal = resolveSystemProperty(dp.placeholder);
+        }
+
+        if (StringUtils.isBlank(propVal)) {
+            propVal = dp.defaultValue;
+        }
+
+        return trimToEmpty(propVal);
     }
 
     private static class DefaultablePlaceholder {

@@ -1,9 +1,51 @@
 package com.alibaba.otter.canal.parse.driver.mysql.utils;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.security.*;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.X509EncodedKeySpec;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
 
 public class MySQLPasswordEncrypter {
+
+    private static final int CACHING_SHA2_DIGEST_LENGTH = 32;
+
+    public static byte[] scrambleCachingSha2(byte[] password, byte[] seed) throws DigestException {
+        MessageDigest md;
+        try {
+            md = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException ex) {
+            throw new DigestException(ex);
+        }
+
+        byte[] dig1 = new byte[CACHING_SHA2_DIGEST_LENGTH];
+        byte[] dig2 = new byte[CACHING_SHA2_DIGEST_LENGTH];
+        byte[] scramble1 = new byte[CACHING_SHA2_DIGEST_LENGTH];
+
+        // SHA2(src) => digest_stage1
+        md.update(password, 0, password.length);
+        md.digest(dig1, 0, CACHING_SHA2_DIGEST_LENGTH);
+        md.reset();
+
+        // SHA2(digest_stage1) => digest_stage2
+        md.update(dig1, 0, dig1.length);
+        md.digest(dig2, 0, CACHING_SHA2_DIGEST_LENGTH);
+        md.reset();
+
+        // SHA2(digest_stage2, m_rnd) => scramble_stage1
+        md.update(dig2, 0, dig1.length);
+        md.update(seed, 0, seed.length);
+        md.digest(scramble1, 0, CACHING_SHA2_DIGEST_LENGTH);
+
+        // XOR(digest_stage1, scramble_stage1) => scramble
+        byte[] mysqlScrambleBuff = new byte[CACHING_SHA2_DIGEST_LENGTH];
+        xorString(dig1, mysqlScrambleBuff, scramble1, CACHING_SHA2_DIGEST_LENGTH);
+
+        return mysqlScrambleBuff;
+    }
 
     public static final byte[] scramble411(byte[] pass, byte[] seed) throws NoSuchAlgorithmException {
         MessageDigest md = MessageDigest.getInstance("SHA-1");
@@ -48,6 +90,26 @@ public class MySQLPasswordEncrypter {
         return new String(chars);
     }
 
+    public static final byte[] scrambleRsa(byte[] publicKeyBytes, byte[] pass,
+                                           byte[] seed) throws NoSuchAlgorithmException, InvalidKeySpecException,
+                                                        NoSuchPaddingException, InvalidKeyException,
+                                                        IllegalBlockSizeException, BadPaddingException {
+        byte[] input = new byte[pass.length + 1];
+        System.arraycopy(pass, 0, input, 0, pass.length);
+        byte[] encryptedPassword = new byte[input.length];
+        xorString(input, encryptedPassword, seed, input.length);
+        String publicKeyPem = new String(publicKeyBytes).replace("\n", "")
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "");
+        byte[] certificateData = java.util.Base64.getDecoder().decode(publicKeyPem.getBytes());
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(certificateData);
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        PublicKey publicKey = keyFactory.generatePublic(keySpec);
+        Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-1AndMGF1Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+        return cipher.doFinal(encryptedPassword);
+    }
+
     private static long[] hash(String src) {
         long nr = 1345345333L;
         long add = 7;
@@ -69,6 +131,15 @@ public class MySQLPasswordEncrypter {
         result[0] = nr & 0x7fffffffL;
         result[1] = nr2 & 0x7fffffffL;
         return result;
+    }
+
+    private static void xorString(byte[] from, byte[] to, byte[] scramble, int length) {
+        int pos = 0;
+        int scrambleLength = scramble.length;
+        while (pos < length) {
+            to[pos] = (byte) (from[pos] ^ scramble[pos % scrambleLength]);
+            pos++;
+        }
     }
 
 }

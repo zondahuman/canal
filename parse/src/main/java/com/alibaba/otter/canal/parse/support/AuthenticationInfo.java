@@ -5,9 +5,12 @@ import java.net.InetSocketAddress;
 import org.apache.commons.lang.builder.ToStringBuilder;
 import org.apache.commons.lang.builder.ToStringStyle;
 
+import com.alibaba.otter.canal.common.utils.CommonUtils;
+import com.alibaba.otter.canal.parse.driver.mysql.ssl.SslInfo;
+
 /**
  * 数据库认证信息
- * 
+ *
  * @author jianghang 2012-7-11 上午11:22:19
  * @version 1.0.0
  */
@@ -16,7 +19,16 @@ public class AuthenticationInfo {
     private InetSocketAddress address;            // 主库信息
     private String            username;           // 帐号
     private String            password;           // 密码
-    private String            defaultDatabaseName; // 默认链接的数据库
+    private String            defaultDatabaseName;// 默认链接的数据库
+    private String            pwdPublicKey;       // 公钥
+    private boolean           enableDruid;        // 是否使用druid加密解密数据库密码
+    private SslInfo           sslInfo;
+
+    public void initPwd() throws Exception {
+        if (enableDruid) {
+            this.password = CommonUtils.decryptDruidPassword(pwdPublicKey, password);
+        }
+    }
 
     public AuthenticationInfo(){
         super();
@@ -26,11 +38,17 @@ public class AuthenticationInfo {
         this(address, username, password, "");
     }
 
-    public AuthenticationInfo(InetSocketAddress address, String username, String password, String defaultDatabaseName){
+    private AuthenticationInfo(InetSocketAddress address, String username, String password, String defaultDatabaseName){
         this.address = address;
         this.username = username;
         this.password = password;
         this.defaultDatabaseName = defaultDatabaseName;
+    }
+
+    public AuthenticationInfo(InetSocketAddress address, String username, String password, String defaultDatabaseName,
+                              SslInfo sslInfo){
+        this(address, username, password, defaultDatabaseName);
+        this.sslInfo = sslInfo;
     }
 
     public InetSocketAddress getAddress() {
@@ -63,6 +81,30 @@ public class AuthenticationInfo {
 
     public void setDefaultDatabaseName(String defaultDatabaseName) {
         this.defaultDatabaseName = defaultDatabaseName;
+    }
+
+    public String getPwdPublicKey() {
+        return pwdPublicKey;
+    }
+
+    public void setPwdPublicKey(String pwdPublicKey) {
+        this.pwdPublicKey = pwdPublicKey;
+    }
+
+    public boolean isEnableDruid() {
+        return enableDruid;
+    }
+
+    public void setEnableDruid(boolean enableDruid) {
+        this.enableDruid = enableDruid;
+    }
+
+    public SslInfo getSslInfo() {
+        return sslInfo;
+    }
+
+    public void setSslInfo(SslInfo sslInfo) {
+        this.sslInfo = sslInfo;
     }
 
     @Override

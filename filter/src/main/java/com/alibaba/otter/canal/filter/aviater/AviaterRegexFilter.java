@@ -1,8 +1,6 @@
 package com.alibaba.otter.canal.filter.aviater;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -22,7 +20,6 @@ import com.googlecode.aviator.Expression;
  */
 public class AviaterRegexFilter implements CanalEventFilter<String> {
 
-    private static final String             SPLIT             = ",";
     private static final String             PATTERN_SPLIT     = "|";
     private static final String             FILTER_EXPRESSION = "regex(pattern,target)";
     private static final RegexFunction      regexFunction     = new RegexFunction();
@@ -44,19 +41,74 @@ public class AviaterRegexFilter implements CanalEventFilter<String> {
         this.defaultEmptyValue = defaultEmptyValue;
         List<String> list = null;
         if (StringUtils.isEmpty(pattern)) {
-            list = new ArrayList<String>();
+            list = new ArrayList<>();
         } else {
-            String[] ss = StringUtils.split(pattern, SPLIT);
-            list = Arrays.asList(ss);
+            // fix issue #5442: only split on commas outside regex grouping constructs,
+            // so quantifiers like \d{1,2} are kept intact.
+            list = splitPattern(pattern);
         }
 
         // 对pattern按照从长到短的排序
         // 因为 foo|foot 匹配 foot 会出错，原因是 foot 匹配了 foo 之后，会返回 foo，但是 foo 的长度和 foot
         // 的长度不一样
-        Collections.sort(list, COMPARATOR);
+        list.sort(COMPARATOR);
         // 对pattern进行头尾完全匹配
         list = completionPattern(list);
         this.pattern = StringUtils.join(list, PATTERN_SPLIT);
+    }
+
+    /**
+     * 按顶层逗号拆分多个正则表达式，跳过位于 {}, [], () 内的逗号，避免破坏类似 \d{1,2} 的量词写法。
+     */
+    private static List<String> splitPattern(String pattern) {
+        List<String> result = new ArrayList<>();
+        int braceDepth = 0;
+        int bracketDepth = 0;
+        int parenDepth = 0;
+        int start = 0;
+        int len = pattern.length();
+        for (int i = 0; i < len; i++) {
+            char c = pattern.charAt(i);
+            // 反斜杠转义：跳过下一个字符，避免把 \{ \[ \( 等误判为分组开始
+            if (c == '\\' && i + 1 < len) {
+                i++;
+                continue;
+            }
+            switch (c) {
+                case '{':
+                    braceDepth++;
+                    break;
+                case '}':
+                    if (braceDepth > 0) braceDepth--;
+                    break;
+                case '[':
+                    bracketDepth++;
+                    break;
+                case ']':
+                    if (bracketDepth > 0) bracketDepth--;
+                    break;
+                case '(':
+                    parenDepth++;
+                    break;
+                case ')':
+                    if (parenDepth > 0) parenDepth--;
+                    break;
+                case ',':
+                    if (braceDepth == 0 && bracketDepth == 0 && parenDepth == 0) {
+                        if (i > start) {
+                            result.add(pattern.substring(start, i));
+                        }
+                        start = i + 1;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (start < len) {
+            result.add(pattern.substring(start));
+        }
+        return result;
     }
 
     public boolean filter(String filtered) throws CanalFilterException {
@@ -68,7 +120,7 @@ public class AviaterRegexFilter implements CanalEventFilter<String> {
             return defaultEmptyValue;
         }
 
-        Map<String, Object> env = new HashMap<String, Object>();
+        Map<String, Object> env = new HashMap<>();
         env.put("pattern", pattern);
         env.put("target", filtered.toLowerCase());
         return (Boolean) exp.execute(env);
@@ -90,13 +142,7 @@ public class AviaterRegexFilter implements CanalEventFilter<String> {
 
         @Override
         public int compare(String str1, String str2) {
-            if (str1.length() > str2.length()) {
-                return -1;
-            } else if (str1.length() < str2.length()) {
-                return 1;
-            } else {
-                return 0;
-            }
+            return Integer.compare(str2.length(), str1.length());
         }
     }
 
@@ -114,15 +160,20 @@ public class AviaterRegexFilter implements CanalEventFilter<String> {
      */
 
     private List<String> completionPattern(List<String> patterns) {
-        List<String> result = new ArrayList<String>();
+        List<String> result = new ArrayList<>();
         for (String pattern : patterns) {
-            StringBuffer stringBuffer = new StringBuffer();
-            stringBuffer.append("^");
-            stringBuffer.append(pattern);
-            stringBuffer.append("$");
-            result.add(stringBuffer.toString());
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("^");
+            stringBuilder.append(pattern);
+            stringBuilder.append("$");
+            result.add(stringBuilder.toString());
         }
         return result;
+    }
+
+    @Override
+    public String toString() {
+        return pattern;
     }
 
 }
